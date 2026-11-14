@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/lennon.svg" width="220" alt="Lennon, a shaggy black podenco with tall ears and a melancholy expression" />
+  <img src="assets/lennon.svg" width="220" alt="Lennon, a wiry black podenco with one upright ear, one folded ear, silver eyebrows and a gentle, melancholy expression" />
   <h1>lennon</h1>
   <p><strong>A loyal companion for unfinished work.</strong></p>
   <p>Claude Code → OpenAI Codex → Gemini CLI.<br />One workspace. One continuing session.</p>
@@ -222,7 +222,7 @@ or leaked Claude Code source. It operates supported command-line interfaces:
 [Codex](https://developers.openai.com/codex/noninteractive), and
 [Gemini CLI](https://geminicli.com/docs/cli/headless/).
 
-Lennon is named after a shaggy black podenco with a sad expression. Long ears.
-Soft eyes. Stays with the work.
+Lennon is named after a wiry black podenco with a gentle, sad expression.
+One ear up. One folded. Silver eyebrows. Stays with the work.
 
 MIT © 2026 pballada. Upstream CLIs and services retain their own terms.
