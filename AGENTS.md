@@ -1,17 +1,25 @@
 # Working on Lennon
 
-Lennon is an independent, dependency-free Node.js CLI harness. Keep startup fast,
-use Node 22+ standard APIs, and preserve subscription-first authentication.
+Lennon is a native Rust CLI for macOS and Linux. Keep startup fast, keep the
+production executable independent of Node.js, and preserve subscription-first
+provider authentication. Minimum supported Rust is declared in Cargo.toml.
 
 - Never import proprietary or leaked Claude Code source.
-- Launch provider commands with argument arrays and `shell: false`.
-- Never log credentials, read native token stores, or add permission-bypass flags.
-- The event journal is authoritative. Persist observable tool activity before handoff.
-- Do not claim identical hidden context or exactly-once execution across vendors.
-- Keep native session IDs separate from Lennon session IDs.
-- Add protocol fixtures when modifying provider adapters. Run `npm test`.
-- `npm run bench` measures harness startup, not upstream or model latency.
+- Launch provider commands with argument arrays; never use a shell wrapper.
+- Never read native login tokens or add permission-bypass flags.
+- The version-1 JSONL journal is authoritative and compatible with the original
+  JavaScript harness. Preserve its schema and provider route identities.
+- Persist observable tool activity before handoff. Keep full-sync-per-event
+  durability unless a user explicitly asks for a different durability policy.
+- Do not claim identical hidden context or exactly-once side effects.
+- Keep native IDs separate from Lennon IDs; invalidate native history when a
+  configured route's adapter, model, or command changes.
+- Run cargo fmt --all -- --check, cargo clippy --all-targets --all-features --
+  -D warnings, and cargo test --all-features.
+- The test-fixtures feature enables native mock providers, not production tools.
+  Install/build only --bin lennon for production.
 - Live model tests use account quota; use small read-only prompts when needed.
 
-Code lives in `src/`, the executable in `bin/`, and subprocess tests in `test/`.
-There is no build step and no runtime dependency installation.
+Production source lives in src/*.rs, native integration tests in tests/.
+benchmarks/reference-js is a frozen benchmark/compatibility reference, never a
+production fallback. Model/CLI startup latency is separate from harness overhead.

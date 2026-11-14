@@ -2,123 +2,91 @@
   <img src="assets/lennon.svg" width="220" alt="Lennon, a shaggy black podenco with tall ears and a melancholy expression" />
   <h1>lennon</h1>
   <p><strong>A loyal companion for unfinished work.</strong></p>
-  <p>Claude Code → OpenAI Codex → Gemini CLI.<br />One workspace. One continuing Lennon session.</p>
+  <p>Claude Code → OpenAI Codex → Gemini CLI.<br />One workspace. One continuing session.</p>
 </div>
 
-Lennon is a small, dependency-free CLI harness for the coding agents you already use. When Claude Code reports a usage limit, Lennon saves the observable conversation and tool history, then continues the task with Codex, followed by Gemini. It uses each CLI's existing login and native tools. No API key is required by Lennon.
+Lennon is a **native Rust CLI** that runs the coding agents you already use.
+When a provider reports a usage limit, Lennon saves the observable conversation
+and tool activity and hands the task to the next configured model. It uses each
+CLI's existing login, tools, and native sessions. **No Node.js, JavaScript runtime,
+or API key is required by Lennon.** Upstream CLIs retain their own requirements.
 
-**Status: working alpha.** Automatic failover, native resume, durable history, streaming output, provider cooldowns, and an interactive conversation loop are implemented. This is an independent harness, not a fork or a reimplementation of every Claude Code feature. CLI protocols can change. Hidden reasoning, provider-side state, interactive permission dialogs, and vendor-specific plugins cannot be transferred identically between vendors.
+**Status: working alpha, macOS and Linux.** This is an independent harness, not a
+Claude Code fork or a reproduction of every native interactive feature. Hidden
+reasoning, provider-side state, plugins, and interactive permission dialogs cannot
+transfer identically between vendors.
 
-## Start
+## Install
 
-Requires **Node.js 22+** and at least one authenticated provider CLI.
+The `lennon` command is installed locally on the development machine. To build
+from this private repository elsewhere, install [Rust](https://rust-lang.org/tools/install/)
+1.85 or later and run:
 
 ```sh
 git clone https://github.com/pballada/lennon.git
 cd lennon
-npm install --global .
+cargo install --path . --locked --bin lennon
+```
 
-# Install any missing upstream CLIs using their official instructions.
-# Login once in each CLI you intend to use:
+The crate is not published to crates.io. The application is one native executable
+with no JavaScript runtime dependency. Separately install and authenticate at
+least one provider CLI using its official instructions:
+
+```sh
 claude
 codex login
 gemini
-
 lennon doctor
+```
+
+## Use
+
+```sh
 cd /path/to/your/project
 lennon --write "Fix the failing tests and verify the changes"
-```
-
-Lennon is not yet published to npm. Install from the repository. Claude Code, Codex, and Gemini CLI must be separately installed; Lennon neither bundles nor modifies them. Account entitlements, model availability, and usage limits belong to the respective providers.
-
-```sh
-lennon                                  # conversation loop, read-only tools
-lennon --write                          # conversation loop, edits permitted
-lennon -p "Explain this repository"      # one task
-git diff | lennon -p "Review this diff"  # add piped context
-lennon --continue -p "Now add tests"     # latest session in this directory
-lennon --resume SESSION_ID --write       # retry unfinished work
-lennon --order codex,gemini -p "Review the build"
-lennon --provider claude --model claude=sonnet -p "Explain this module"
+lennon                                  # interactive, native read-only/plan policy
+lennon --write                          # interactive, edits permitted
+lennon -p "Explain this repository"      # one task, then exit
+git diff | lennon -p "Review this diff"
+lennon --continue -p "Now add tests"
+lennon --resume SESSION_ID --write       # retry pending work
 lennon --json -p "Explain the project"   # JSONL for scripts
 lennon sessions
-lennon config
+lennon providers
 ```
 
-Interactive commands: `/status`, `/retry` (clear cooldowns and retry pending work), `/help`, `/exit`. To clear cooldowns in a one-shot run, pass `--retry`. `--resume` without a new prompt retries the pending task; it does not invent a new task after a completed turn. Every run prints the Lennon session ID.
+Interactive commands: `/status`, `/retry`, `/help`, `/exit`. `/retry` clears
+cooldowns and retries pending work; `--retry` does the same for one-shot runs.
+`--resume` without a prompt retries unfinished work and rejects completed tasks.
+`--cwd PATH` selects a project directory. `--timeout MS` stops a stalled provider
+while preserving the pending task; timeouts do not cause automatic failover.
+Ctrl-C and SIGTERM stop the provider process group and save an unfinished session.
+Uncooperative children receive SIGKILL after a 1.5-second grace period.
 
-## How continuity works
+## Configure providers, models, and fallback order
 
-1. Save the user request in a private append-only event journal.
-2. Start Claude Code with streaming JSON and the current project directory.
-3. Persist native session IDs, responses, tool calls, and results as they arrive.
-4. On an explicit quota/usage-limit error or temporary service failure, try the next configured CLI. Missing executables are skipped.
-5. Give the next agent the original request, latest request, portable transcript, and the same files. Tell it to inspect existing changes before repeating interrupted actions.
-6. Resume the original native session on later turns when its cooldown expires, sending the intervening history it has not seen.
-
-There is no repeated API polling and no SDK dependency tree. Prompts travel over stdin instead of shell arguments. Explicit streamed quota errors terminate upstream retry loops promptly. The primary provider is retried on future turns after its cooldown; Lennon does not switch away from an actively successful provider mid-turn.
-
-If all providers are unavailable, Lennon exits with an unfinished session ready to resume. It cannot keep running without an available authenticated account. Authentication failures, permission errors, invalid options, unknown failures, explicit timeouts, and cancellation stop the run. They do not silently broaden access or switch providers.
-
-### Context and side effects
-
-Lennon retains the complete raw event journal. It passes observable messages and tool activity to other providers, excluding thinking blocks from the portable transcript. Long handoffs include the recent history inline plus a private file containing the full portable handoff. The agent is instructed to read that file before continuing. If its permissions prevent reading it, continuity requires resolving that access restriction.
-
-This is context reconstruction, not an identical vendor-native session. Context windows, compaction, model interpretations, and native tools differ. Interrupting an agent cannot roll back a command already executed. The next agent is instructed to inspect files and tool results before proceeding; exactly-once execution of external side effects is not guaranteed. A stalled provider that emits no error cannot be detected as quota-limited. `--timeout MS` can stop it while keeping the task pending.
-
-## Permissions and credentials
-
-The default uses each provider's read-only/plan policy. `--write` selects Claude `acceptEdits`, Codex `workspace-write`, and Gemini `auto_edit`. Lennon never adds permission-bypass or yolo flags. These modes are not identical security boundaries. Upstream configured hooks, MCP tools, sandbox policies, project instructions, and trust settings still apply. Run only in projects you trust.
-
-Headless CLIs cannot all present their usual interactive approval dialogs. Commands that need approval may be denied. For Claude, grant specific tools through your native settings or `providers.claude.allowedTools` (for example `"Read,Edit,Bash(npm test)"`). Lennon does not translate permissions, hooks, MCP servers, or plugins across providers.
-
-Lennon does not read, copy, or exchange login tokens. It launches the CLIs using their own credentials. By default it removes common API-key environment variables from child processes so an inherited key does not take precedence over subscription login. Stored upstream authentication and billing choices remain the responsibility of each CLI. Set `"authentication": "environment"` only when you deliberately want to pass through API-key environment variables.
-
-Session data can contain source code and tool output. It is stored outside the repository, with private file/directory modes on POSIX. **Automatic failover sends the recorded task history to the next configured provider.** Configure the order to include only providers you want to receive it. Lennon has no telemetry or remote session store.
-
-## Configuration
-
-User config: `~/.config/lennon/config.json` (respects `XDG_CONFIG_HOME`). No project-local config is executed. Model defaults come from the installed CLIs so Lennon does not pin stale model names.
-
-```json
-{
-  "order": ["claude", "codex", "gemini"],
-  "authentication": "subscription",
-  "cooldownMs": 300000,
-  "handoffChars": 120000,
-  "providers": {
-    "claude": { "command": "claude" },
-    "codex": { "command": "codex" },
-    "gemini": { "command": "gemini" }
-  }
-}
-```
-
-Manage the configuration from the terminal:
+The default chain is `claude,codex,gemini`. Each CLI chooses its own default model
+unless a model is configured. Config lives at `~/.config/lennon/config.json`,
+respecting `XDG_CONFIG_HOME`.
 
 ```sh
-lennon config init                              # create a file; never overwrite one
-lennon config set order codex,claude,gemini      # persist fallback order
+lennon config init                              # create; never overwrite
+lennon config set order codex,claude,gemini
 lennon config set providers.claude.model sonnet
 lennon config set providers.gemini.enabled false
-lennon config unset providers.claude.model      # restore the native CLI default
-lennon config                                  # show effective configuration
-lennon providers                               # list entries, models, and positions
+lennon config unset providers.claude.model      # restore native model default
+lennon config                                  # effective settings and locations
+lennon providers                               # entries, models, chain positions
 ```
 
-Provider entries accept `adapter` (`claude`, `codex`, or `gemini`), `model`,
-`command`, and `enabled`. The built-in entries inherit the adapter matching
-their name. Disabled entries are skipped even if they remain in `order`.
-At least one ordered entry must be enabled. Omit `model` to use the native CLI's
-configured default. Model names are passed unchanged to that CLI and must be
-available to your account. Claude also accepts `allowedTools` in write mode.
-`command` is a single executable path, never a shell command.
-
-For multiple models from the same backend, define separate named entries:
+Multiple entries can use different models on the same backend:
 
 ```json
 {
   "order": ["quick", "deep", "codex", "gemini"],
+  "authentication": "subscription",
+  "cooldownMs": 300000,
+  "handoffChars": 120000,
   "providers": {
     "quick": { "adapter": "claude", "model": "sonnet" },
     "deep": { "adapter": "claude", "model": "opus" },
@@ -128,65 +96,133 @@ For multiple models from the same backend, define separate named entries:
 }
 ```
 
-You can create an entry without editing JSON manually:
-
 ```sh
 lennon config set providers.quick '{"adapter":"claude","model":"sonnet"}'
 lennon config set order quick,codex,gemini
-```
-
-Each entry has its own native session and cooldown. Provider account limits may
-be shared between models; adding entries does not increase account quota.
-Changing an entry's adapter, command, or model starts a fresh native session
-with the recorded context, avoiding incompatible native histories.
-
-Per-invocation overrides:
-
-```sh
 lennon --order codex,claude --model claude=sonnet -p "Review this change"
-lennon --provider quick -p "Explain the project"  # only one configured entry
+lennon --provider quick -p "Explain the project"
 lennon --config /path/to/config.json providers
 ```
 
-Repeat `--model ID=MODEL` for different entries. `--provider` and `--order` are
-mutually exclusive. Precedence is CLI flags → selected config file → defaults.
-`--config` overrides `LENNON_CONFIG`, which overrides the normal user config path.
-Explicitly selected missing files fail immediately. Flags do not modify the
-saved file, and resumed sessions use the current config and flags. Existing
-config files with `order`, `model`, and `command` remain compatible.
+Entries accept `adapter` (`claude`, `codex`, `gemini`), `model`, `command`, and
+`enabled`. Built-in entry names inherit their matching adapter. Claude also
+accepts `allowedTools` in write mode. `command` is a single executable path,
+never a shell command. Models are passed unchanged to the upstream CLI and must
+be available to your account. Disabled entries are skipped. At least one ordered
+entry must be enabled. Duplicate IDs, unknown settings, and invalid assignments
+fail before starting any provider.
 
-Cooldowns are local to a Lennon session and default to five minutes; they do not
-predict provider reset times. Unknown settings, invalid model assignments,
-duplicate order entries, and unknown adapter IDs are rejected before execution.
+Repeat `--model ID=MODEL` for different entries. `--provider` selects one entry;
+it cannot combine with `--order`. Precedence: CLI flags → selected config →
+defaults. `--config` overrides `LENNON_CONFIG`, which overrides the user config
+path. An explicitly selected missing file is an error. Per-run flags never
+modify the saved configuration. Resumed sessions use the current configuration.
+Changing a route's adapter, command, or model starts a fresh native session with
+the portable context. Each entry keeps separate native IDs and cooldowns; model
+entries do not increase shared account quotas.
 
-State: `~/.local/state/lennon/sessions/SESSION_ID/` (respects `XDG_STATE_HOME`). Override with `LENNON_STATE_DIR`; override config location with `LENNON_CONFIG`. The journal is authoritative when recovering an interrupted metadata write. Only an incomplete final JSONL record is repaired; other corruption stops recovery. Session locks prevent simultaneous writers. Native session files must also remain available for native resume; deleted native sessions require starting a new Lennon session.
+## How continuity works
 
-## Development
+1. Journal the user request in private local state.
+2. Start the first eligible provider with JSON streaming, the selected model,
+   the project directory, and the task on stdin.
+3. Persist native session IDs, observable messages, tool calls, and results.
+4. On explicit quota errors or temporary service failures, try the next entry.
+   Missing executables are skipped; authentication and permission failures stop.
+5. Pass the original/latest requests, observable history, and the same workspace
+   to the fallback. It must inspect existing changes before repeating actions.
+6. Resume native sessions on later turns, including intervening context they have
+   not seen. Retry the primary after its session-local cooldown expires.
+
+Explicit streamed quota errors terminate native retry loops promptly. No repeated
+API polling is used. If every provider is unavailable, Lennon exits with a saved
+pending session; it cannot continue without an available authenticated account.
+Unknown errors, invalid options, timeouts, and cancellation also stop the run.
+
+### Existing JavaScript sessions
+
+The Rust rewrite retains the original **version-1 JSON/JSONL formats**, config
+locations, session IDs, native IDs, and routing settings. No migration command
+or data deletion is needed. JavaScript → Rust → JavaScript native-session resume
+is tested against the archived predecessor in the compatibility benchmark.
+
+State defaults to `~/.local/state/lennon/sessions/SESSION_ID/`, respecting
+`XDG_STATE_HOME`; override with `LENNON_STATE_DIR`. The append-only journal
+recovers native IDs, context cursors, and pending state after interrupted metadata
+writes. Only a torn final record is repaired; other corruption stops recovery.
+Exclusive session locks prevent simultaneous writers. Native provider session
+files must remain available for native resume.
+
+### Context and durability
+
+Raw events are journaled; the portable transcript excludes private thinking
+blocks. Long handoffs include recent context inline and a private file with the
+full portable history. The agent is instructed to read that file before
+continuing and to report permission problems instead of guessing missing context.
+
+The Rust journal retains a file descriptor and calls `sync_all` after **every
+event**, preserving the original Node implementation's full-sync policy on
+macOS. Handoff files and atomic metadata writes are synced too. The rewrite
+speeds up launch and parsing; it does not hide disk costs by weakening durability.
+Actual power-loss guarantees still depend on the filesystem and hardware.
+
+This is context reconstruction, not an identical vendor-native session.
+Compaction, model interpretation, and tools differ. Commands already executed
+cannot be rolled back by interrupting a provider. Exactly-once execution of
+external side effects is not guaranteed. A provider that hangs without emitting
+an error requires cancellation or an explicit timeout.
+
+## Permissions and credentials
+
+Read-only/plan is the default. `--write` selects Claude `acceptEdits`, Codex
+`workspace-write`, and Gemini `auto_edit`. Lennon never enables permission bypass
+or yolo mode. Native hooks, MCP tools, trust settings, and sandbox policies still
+apply. Headless CLIs cannot always present interactive approval dialogs; commands
+requiring approval may be denied. For Claude, use native settings or configured
+`allowedTools`, such as `"Read,Edit,Bash(npm test)"`, for specific permissions.
+
+Lennon does not read or exchange login tokens. Subscription mode removes common
+API-key environment variables from child processes to avoid taking precedence
+over native subscription login. Native stored authentication and billing remain
+under each CLI's control. Set `authentication` to `environment` only when you want
+to pass API-key environment variables through.
+
+Session files may contain code and tool output. New files/directories use private
+POSIX permissions. **Automatic failover sends recorded task history to the next
+configured provider.** Include only providers you intend to receive it. Lennon
+has no telemetry or remote session store.
+
+## Development and performance
 
 ```sh
-npm test
-npm run bench
-npm pack --dry-run
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-features
+cargo build --locked --release --bin lennon
 ```
 
-Tests use mock executables, exercise actual subprocesses, and require no accounts or model spend. They cover failover, streamed errors, native resume, context handoff, cooldowns, permissions, cancellation, timeouts, UTF-8 framing, crash recovery, session locking, and the end-to-end CLI. Live provider verification is separate from protocol fixtures.
+The `test-fixtures` feature enables native mock executables used by integration
+tests. Production installation/build selects only `--bin lennon`. Tests need no
+Node/Python runtime, accounts, or model spend. CI covers Linux/macOS and Rust 1.85.
 
-The next milestones are richer permission interaction, provider protocol compatibility fixtures, and deliberate context compaction with verification. Full Claude Code feature parity is not claimed.
-
-Runtime measurements and reproducible Node/Bun/Rust probes are in
-[benchmarks/RESULTS.md](benchmarks/RESULTS.md). Rust led minimal startup and
-memory; Bun led the JSON workload. Per-event disk flushing dominated the
-equal-durability streaming tests. The default runtime remains Node.
+The archived JavaScript source in `benchmarks/reference-js` exists only for
+comparative measurements and compatibility tests; it is never invoked by the
+native application. Python/Node are optional benchmark tools, not runtime
+requirements. See [native port results](benchmarks/NATIVE_PORT.md),
+[benchmark methodology](benchmarks/README.md), and [validation](VALIDATION.md).
 
 ## Provenance
 
-Inspired by the workflow in [anthropics/claude-code](https://github.com/anthropics/claude-code). Its public repository does not provide the core CLI under an open-source license; its [license](https://github.com/anthropics/claude-code/blob/main/LICENSE.md) reserves Anthropic's rights. Lennon contains independently written harness code and does not incorporate Claude Code source or leaked mirrors. It operates the supported command-line interfaces:
+Inspired by [Claude Code's workflow](https://github.com/anthropics/claude-code).
+The core CLI is not provided there under an open-source license; Anthropic's
+[license](https://github.com/anthropics/claude-code/blob/main/LICENSE.md) reserves
+its rights. Lennon contains independently written harness code, not proprietary
+or leaked Claude Code source. It operates supported command-line interfaces:
+[Claude Code](https://code.claude.com/docs/en/headless),
+[Codex](https://developers.openai.com/codex/noninteractive), and
+[Gemini CLI](https://geminicli.com/docs/cli/headless/).
 
-- [Claude Code headless mode](https://code.claude.com/docs/en/headless)
-- [Codex non-interactive mode](https://developers.openai.com/codex/noninteractive)
-- [Gemini CLI headless mode](https://geminicli.com/docs/cli/headless/)
-- [Gemini session management](https://geminicli.com/docs/cli/session-management/)
+Lennon is named after a shaggy black podenco with a sad expression. Long ears.
+Soft eyes. Stays with the work.
 
-Lennon is named after a shaggy black podenco with a sad expression. Long ears. Soft eyes. Stays with the work.
-
-MIT © 2026 pballada. Upstream CLIs and services retain their own licenses and terms.
+MIT © 2026 pballada. Upstream CLIs and services retain their own terms.

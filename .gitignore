@@ -8,3 +8,5 @@ coverage/
 .lennon/
 benchmarks/rust/target/
 benchmarks/results/local*.json
+/target/
+benchmarks/results/native-port-local.json

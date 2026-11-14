@@ -1,3 +1,5 @@
+> Lennon now runs natively in Rust. See [NATIVE_PORT.md](NATIVE_PORT.md) for the full-application comparison. The probes below describe the earlier language experiment; its JavaScript baseline is archived in `reference-js`.
+
 # Lennon runtime benchmark
 
 This experiment compares Node.js, optional Bun, and a release-mode Rust probe.

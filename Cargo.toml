@@ -1,0 +1,34 @@
+[package]
+name = "lennon"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.85"
+description = "A loyal coding harness: Claude Code, Codex, Gemini. One continuing session."
+license = "MIT"
+repository = "https://github.com/pballada/lennon"
+exclude = ["benchmarks", "assets", "target"]
+
+[features]
+test-fixtures = []
+
+[[bin]]
+name = "lennon"
+path = "src/main.rs"
+
+[[bin]]
+name = "lennon-provider-fixture"
+path = "tests/fixtures/provider.rs"
+required-features = ["test-fixtures"]
+
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+libc = "0.2"
+signal-hook = "0.4"
+regex = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

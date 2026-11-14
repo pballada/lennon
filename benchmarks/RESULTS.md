@@ -1,3 +1,5 @@
+> Historical pre-port study. The complete Rust CLI is now measured in [NATIVE_PORT.md](NATIVE_PORT.md).
+
 # Runtime measurements · 2026-11-14
 
 Measured on Apple M4, darwin/arm64,

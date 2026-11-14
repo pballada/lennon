@@ -1,29 +1,57 @@
-# Validation · 2026-11-14
+# Validation · native Rust 0.2.0 · 2026-11-14
 
-Local verification on macOS:
+## Automated checks
 
-- `npm run check`: 18 tests passed; CLI syntax checked.
-- `npm pack --dry-run`: package contains only the intended distributable files.
-- `npm run bench`: 20 fresh processes, median 47.2 ms, p95 51.6 ms for `--help`.
-  This is harness overhead, not a latency promise for any model or upstream CLI.
-- Claude Code **2.1.325**: live subscription-backed read-only request succeeded.
-  A second turn resumed the recorded native session and recalled the prior reply.
-- Codex CLI **0.162.0**: live subscription-backed read-only request succeeded.
-  A second turn resumed the recorded native thread and recalled the prior reply.
-- Gemini CLI: not installed on the development machine. Adapter flags and event
-  shapes follow the official headless/session documentation and are fixture-tested;
-  live authentication, execution, and resume remain unverified.
+- `cargo fmt --all -- --check`: passed.
+- `cargo clippy --all-targets --all-features -- -D warnings`: passed.
+- `cargo test --all-features`: **32 passed** (10 unit + 22 native integration).
+- `cargo build --release --bin lennon`: passed; approximately 1.7 MiB executable.
+- Cargo package inventory excludes archived JavaScript and benchmark sources.
 
-Real quota exhaustion was not deliberately induced. The automated suite launches
-mock provider processes to verify streamed quota handling and end-to-end failover.
-No claims of complete upstream feature parity, identical hidden context, or
-exactly-once side effects are made.
+Native tests launch compiled mock providers without Node, Python, credentials,
+model spend, or network access. They cover quota failover, cooldown exhaustion,
+auth/permission errors, independent model entries, config editing/validation,
+model changes, context replay, native resume, UTF-8 streaming, missing and malformed
+provider output, event-size limits, secret-environment handling, timeouts, Ctrl-C,
+process groups, uncooperative children, journal recovery, private permissions,
+exclusive locks, stale-lock recovery, and bounded handoff archives.
 
-CI runs the automated suite on Linux and macOS with Node 22 and 24.
+## Existing session compatibility
 
-The follow-up [runtime comparison](benchmarks/RESULTS.md) records randomized
-Node 26.10.0, Bun 1.4.4, and release-mode Rust 1.100.0 measurements on Apple M4.
-Bun passed the same 18 mock/subprocess tests. Cross-runtime disk measurements
-were repeated with matching macOS F_FULLFSYNC semantics after finding that Bun's
-native fsyncSync behavior differed. Production code and default runtime stayed
-unchanged. Raw samples and benchmark sources are committed alongside the report.
+The comparative experiment creates a real session with the archived JavaScript
+CLI, resumes it using the Rust CLI, and resumes it again using the JavaScript
+CLI. **JS → Rust → JS passed**, retaining the same native provider session.
+Version-1 JSON/JSONL state remains compatible; no session migration is required.
+
+## Live provider checks
+
+- Claude Code 2.1.325: Rust CLI returned the requested token in a read-only run;
+  a second run resumed the native session and recalled the same token.
+- Codex CLI 0.162.0: Rust CLI returned the requested token in a read-only run;
+  a second run resumed the native thread and recalled the same token.
+- Gemini: native mock-protocol and resume tests pass. Gemini CLI is not installed
+  here, so live authentication and execution remain unverified.
+- Real quota exhaustion was not deliberately induced; quota routing uses native
+  fixture processes in automated tests.
+
+## Full implementation performance
+
+On Apple M4/macOS, using release Rust and Node 26.10.0:
+
+| Median | Rust | Previous JavaScript CLI |
+| --- | ---: | ---: |
+| Fresh-process full CLI startup | 3.82 ms | 48.71 ms |
+| Complete controlled mock-provider failover | 113.97 ms | 166.81 ms |
+| Peak RSS, full CLI help | 6.00 MiB | 48.17 MiB |
+
+Five warmups, randomized balanced blocks, 100 startup samples, 25 failover samples,
+and five separate memory samples. The same native fixtures serve both versions.
+Full-sync-per-journal-event durability was retained. These measurements exclude
+live provider/model network latency and do not predict long-session memory.
+
+[Method and raw data](benchmarks/NATIVE_PORT.md). The earlier language-probe study
+is retained as historical context, not substituted for the full native benchmark.
+
+CI now verifies the Rust application on macOS and Linux, plus Rust 1.85 minimum
+compatibility on Linux. JavaScript is retained only as a benchmark/compatibility
+reference and is not shipped in the crate or invoked by the native command.

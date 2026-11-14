@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { createHash } from 'node:crypto';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const reference = join(root, 'benchmarks/reference-js');
 const bun = process.env.LENNON_BENCH_BUN;
 if (!bun || process.platform !== 'darwin') throw new Error('Requires macOS and LENNON_BENCH_BUN');
 const rust = process.env.LENNON_BENCH_RUST || join(root,'benchmarks/rust/target/release/lennon-perf-probe');
@@ -47,9 +48,9 @@ try {
   // Overlay only the fsync binding in a temporary copy; all other source is identical.
   // The shipping repository is never modified and no FFI shim ships in Lennon.
   const overlay=join(work,'overlay'); mkdirSync(overlay);
-  cpSync(join(root,'src'),join(overlay,'src'),{recursive:true});
-  cpSync(join(root,'bin'),join(overlay,'bin'),{recursive:true});
-  cpSync(join(root,'package.json'),join(overlay,'package.json'));
+  cpSync(join(reference,'src'),join(overlay,'src'),{recursive:true});
+  cpSync(join(reference,'bin'),join(overlay,'bin'),{recursive:true});
+  cpSync(join(reference,'package.json'),join(overlay,'package.json'));
   const store=join(overlay,'src/store.js');
   writeFileSync(store,`import {sync as fsyncSync} from ${JSON.stringify(pathToFileURL(join(root,'benchmarks/fullsync.mjs')).href)};\n`+readFileSync(store,'utf8').replace('fsyncSync, ',''));
   const primary=join(work,'provider-claude'),fallback=join(work,'provider-codex');
@@ -60,7 +61,7 @@ try {
   for(let i=-5;i<20;i++) for(const name of shuffle(['node','bun_fullsync'])) {
     const dir=mkdtempSync(join(work,'attempt-'));
     const executable=name==='node'?process.execPath:bun;
-    const entry=name==='node'?join(root,'bin/lennon.js'):join(overlay,'bin/lennon.js');
+    const entry=name==='node'?join(reference,'bin/lennon.js'):join(overlay,'bin/lennon.js');
     const p=run(executable,[entry,'--json','--cwd',root,'-p','benchmark task: finish existing work'],{LENNON_CONFIG:config,LENNON_STATE_DIR:join(dir,'state'),LENNON_BENCH_MARKS:dir,LENNON_BENCH_EVENTS:'100'});
     const last=p.stdout.trim().split('\n').map(JSON.parse).at(-1);
     if(last.status!=='success'||last.provider!=='codex'||!p.stdout.includes('BENCH_DONE'))throw new Error('Failover failed');

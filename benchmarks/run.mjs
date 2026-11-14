@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const reference = join(root, 'benchmarks/reference-js');
 const rust = process.env.LENNON_BENCH_RUST || join(root, 'benchmarks/rust/target/release/lennon-perf-probe');
 const bun = process.env.LENNON_BENCH_BUN;
 const runtimes = [['node', process.execPath], ...(bun ? [['bun', bun]] : [])];
@@ -58,10 +59,10 @@ try {
   sample('startup', {
     node_probe: () => execute(process.execPath, [...nodeProbe, '--help']),
     rust_probe: () => execute(rust, ['--help']),
-    lennon_full: () => execute(process.execPath, ['bin/lennon.js', '--help']),
+    lennon_full: () => execute(process.execPath, [join(reference,'bin/lennon.js'), '--help']),
     ...(bun ? {
       bun_probe: () => execute(bun, [...nodeProbe, '--help']),
-      lennon_bun: () => execute(bun, ['bin/lennon.js','--help']),
+      lennon_bun: () => execute(bun, [join(reference,'bin/lennon.js'),'--help']),
     } : {}),
   }, 100);
 
@@ -106,7 +107,7 @@ try {
   for (let i = -5; i < 30; i++) {
     for (const [name, runtime] of shuffle([...runtimes])) {
     const dir = mkdtempSync(join(work, 'pipeline-'));
-    const run = execute(runtime, ['bin/lennon.js', '--json', '--cwd', root, '-p', 'benchmark task: finish the existing work'], {
+    const run = execute(runtime, [join(reference,'bin/lennon.js'), '--json', '--cwd', root, '-p', 'benchmark task: finish the existing work'], {
       env: { ...process.env, LENNON_CONFIG: config, LENNON_STATE_DIR: join(dir,'state'), LENNON_BENCH_MARKS: dir, LENNON_BENCH_EVENTS: '100' },
     });
     const output = run.stdout.trim().split('\n').map(JSON.parse);
@@ -127,7 +128,7 @@ try {
     for (const [name, cmd, args] of [
       ['node_probe', process.execPath, [...nodeProbe, 'parse', source, join(work,'ignore')]],
       ['rust_probe', rust, ['parse', source, join(work,'ignore')]],
-      ['lennon_help', process.execPath, ['bin/lennon.js','--help']],
+      ['lennon_help', process.execPath, [join(reference,'bin/lennon.js'),'--help']],
       ...(bun ? [['bun_probe',bun,[...nodeProbe,'parse',source,join(work,'ignore')]]] : []),
     ]) {
       const memory = [];
