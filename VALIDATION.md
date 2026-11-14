@@ -20,3 +20,10 @@ No claims of complete upstream feature parity, identical hidden context, or
 exactly-once side effects are made.
 
 CI runs the automated suite on Linux and macOS with Node 22 and 24.
+
+The follow-up [runtime comparison](benchmarks/RESULTS.md) records randomized
+Node 26.10.0, Bun 1.4.4, and release-mode Rust 1.100.0 measurements on Apple M4.
+Bun passed the same 18 mock/subprocess tests. Cross-runtime disk measurements
+were repeated with matching macOS F_FULLFSYNC semantics after finding that Bun's
+native fsyncSync behavior differed. Production code and default runtime stayed
+unchanged. Raw samples and benchmark sources are committed alongside the report.

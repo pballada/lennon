@@ -6,3 +6,5 @@ node_modules/
 coverage/
 *.tgz
 .lennon/
+benchmarks/rust/target/
+benchmarks/results/local*.json

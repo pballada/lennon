@@ -9,7 +9,8 @@
     "start": "node bin/lennon.js",
     "test": "node --test",
     "check": "node --check bin/lennon.js && node --test",
-    "bench": "node scripts/bench.js"
+    "bench": "node scripts/bench.js",
+    "bench:compare": "node benchmarks/run.mjs"
   },
   "files": ["bin", "src", "assets", "README.md", "LICENSE"],
   "repository": { "type": "git", "url": "git+https://github.com/pballada/lennon.git" },

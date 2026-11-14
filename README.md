@@ -109,6 +109,11 @@ Tests use mock executables, exercise actual subprocesses, and require no account
 
 The next milestones are richer permission interaction, provider protocol compatibility fixtures, and deliberate context compaction with verification. Full Claude Code feature parity is not claimed.
 
+Runtime measurements and reproducible Node/Bun/Rust probes are in
+[benchmarks/RESULTS.md](benchmarks/RESULTS.md). Rust led minimal startup and
+memory; Bun led the JSON workload. Per-event disk flushing dominated the
+equal-durability streaming tests. The default runtime remains Node.
+
 ## Provenance
 
 Inspired by the workflow in [anthropics/claude-code](https://github.com/anthropics/claude-code). Its public repository does not provide the core CLI under an open-source license; its [license](https://github.com/anthropics/claude-code/blob/main/LICENSE.md) reserves Anthropic's rights. Lennon contains independently written harness code and does not incorporate Claude Code source or leaked mirrors. It operates the supported command-line interfaces:
