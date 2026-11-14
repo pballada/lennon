@@ -225,7 +225,12 @@ impl Session {
         if self.lock.take().is_some() {
             let _ = fs::remove_file(self.dir.join("lock"));
         }
-        self.guard.take();
+        if let Some(guard) = self.guard.take() {
+            // A fork can temporarily retain a duplicate of this open file
+            // description even with CLOEXEC. Unlock explicitly so those copies
+            // cannot prolong the session lock after the owner releases it.
+            unsafe { libc::flock(guard.as_raw_fd(), libc::LOCK_UN) };
+        }
     }
 }
 impl Drop for Session {
@@ -248,4 +253,30 @@ pub fn list(root: &Path) -> Result<Vec<Value>> {
     }
     out.sort_by(|a, b| b["updated"].as_str().cmp(&a["updated"].as_str()));
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::fd::FromRawFd;
+
+    #[test]
+    fn release_unlocks_even_when_an_inherited_descriptor_remains_open() {
+        let root = std::env::temp_dir().join(format!("lennon-lock-{}", Uuid::new_v4()));
+        private_dir(&root).unwrap();
+        let mut owner = Session::create(&root, &root).unwrap();
+        let id = owner.meta["id"].as_str().unwrap().to_owned();
+        owner.acquire().unwrap();
+        let fd = unsafe { libc::dup(owner.guard.as_ref().unwrap().as_raw_fd()) };
+        assert!(fd >= 0);
+        let retained = unsafe { File::from_raw_fd(fd) };
+        owner.release();
+        let mut successor = Session::open(&root, &id).unwrap();
+        successor.acquire().unwrap();
+        drop(retained);
+        let mut competitor = Session::open(&root, &id).unwrap();
+        assert!(competitor.acquire().is_err());
+        successor.release();
+        fs::remove_dir_all(root).unwrap();
+    }
 }

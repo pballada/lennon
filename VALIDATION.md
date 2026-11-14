@@ -4,7 +4,7 @@
 
 - `cargo fmt --all -- --check`: passed.
 - `cargo clippy --all-targets --all-features -- -D warnings`: passed.
-- `cargo test --all-features`: **32 passed** (10 unit + 22 native integration).
+- `cargo test --all-features`: **33 passed** (11 unit + 22 native integration).
 - `cargo build --release --bin lennon`: passed; approximately 1.7 MiB executable.
 - Cargo package inventory excludes archived JavaScript and benchmark sources.
 
@@ -40,9 +40,9 @@ On Apple M4/macOS, using release Rust and Node 26.10.0:
 
 | Median | Rust | Previous JavaScript CLI |
 | --- | ---: | ---: |
-| Fresh-process full CLI startup | 3.82 ms | 48.71 ms |
-| Complete controlled mock-provider failover | 113.97 ms | 166.81 ms |
-| Peak RSS, full CLI help | 6.00 MiB | 48.17 MiB |
+| Fresh-process full CLI startup | 3.72 ms | 47.79 ms |
+| Complete controlled mock-provider failover | 110.78 ms | 165.77 ms |
+| Peak RSS, full CLI help | 5.98 MiB | 48.20 MiB |
 
 Five warmups, randomized balanced blocks, 100 startup samples, 25 failover samples,
 and five separate memory samples. The same native fixtures serve both versions.
@@ -55,3 +55,8 @@ is retained as historical context, not substituted for the full native benchmark
 CI now verifies the Rust application on macOS and Linux, plus Rust 1.85 minimum
 compatibility on Linux. JavaScript is retained only as a benchmark/compatibility
 reference and is not shipped in the crate or invoked by the native command.
+
+Linux CI exposed inherited file descriptors delaying advisory lock release. The
+owner now explicitly unlocks before closing, with a deterministic duplicated-FD
+regression test. The native benchmark and compatibility checks were repeated
+after this fix.

@@ -5,11 +5,11 @@ implementation on this Apple M4 Mac. No live model generation is included.
 
 | Metric (median) | Rust | JavaScript / Node |
 | --- | ---: | ---: |
-| Fresh-process full CLI startup | 3.82 ms | 48.71 ms |
-| Complete mock-provider failover | 113.97 ms | 166.81 ms |
-| Peak RSS, full CLI help | 6.00 MiB | 48.17 MiB |
+| Fresh-process full CLI startup | 3.72 ms | 47.79 ms |
+| Complete mock-provider failover | 110.78 ms | 165.77 ms |
+| Peak RSS, full CLI help | 5.98 MiB | 48.20 MiB |
 
-Startup improved 12.8×. The complete failover was 31.7% faster in this controlled fixture.
+Startup improved 12.9×. The complete failover was 33.2% faster in this controlled fixture.
 
 The release executable is approximately 1.7 MiB and runs without Node.js or a
 JavaScript fallback. Ordinary Rust/system libraries are linked as part of the
