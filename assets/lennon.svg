@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 560" role="img" aria-labelledby="title desc">
+  <title id="title">Lennon</title>
+  <desc id="desc">A shaggy black podenco dog with long pointed ears, a wiry beard, and sad amber eyes.</desc>
+  <rect width="520" height="560" rx="56" fill="#eee8dc"/>
+  <ellipse cx="262" cy="489" rx="155" ry="17" fill="#d9d0c0"/>
+  <path d="M133 305C100 233 93 120 112 44L138 81 150 63 166 126 176 113 188 215M328 221C341 154 361 77 398 35L400 83 415 69 407 150 420 137 399 244 377 302" fill="#191c1c" stroke="#191c1c" stroke-width="10" stroke-linejoin="round"/>
+  <path d="M131 104Q127 178 157 252L168 215Z" fill="#50504a"/>
+  <path d="M385 96Q350 164 348 245L373 215Z" fill="#50504a"/>
+  <path d="M162 224L184 215 187 196 214 209 234 195 246 211 274 198 291 214 317 202 325 222 350 215 354 235 378 232 369 259 392 264 382 289 400 306 384 327 394 347 375 362 383 389 359 395 364 418 343 421 337 448 314 445 296 472 271 461 251 482 228 464 204 471 190 447 167 449 159 426 136 425 137 400 115 391 125 366 107 352 122 330 111 307 130 288 121 267 144 256 140 235Z" fill="#202424"/>
+  <path d="M171 285Q195 267 226 288M294 287Q326 264 349 279" fill="none" stroke="#565951" stroke-width="8" stroke-linecap="round"/>
+  <path d="M167 296Q197 285 226 301Q199 329 174 309Z" fill="#ae9060"/>
+  <path d="M293 301Q320 284 348 292L343 308Q318 328 293 301Z" fill="#ae9060"/>
+  <ellipse cx="204" cy="305" rx="8" ry="14" fill="#101515"/>
+  <ellipse cx="315" cy="304" rx="8" ry="14" fill="#101515"/>
+  <circle cx="201" cy="300" r="3" fill="#f7f0de"/>
+  <circle cx="312" cy="299" r="3" fill="#f7f0de"/>
+  <path d="M180 291Q199 282 225 298M294 299Q321 280 345 287" fill="none" stroke="#151b1b" stroke-width="9" stroke-linecap="round"/>
+  <path d="M235 308L220 341 199 361 208 376 192 387 213 398 201 414 225 419 219 439 244 434 259 454 275 436 297 441 294 420 318 416 306 399 324 390 305 377 313 362 290 344 277 309" fill="#343a37"/>
+  <path d="M224 354Q258 340 290 352L284 369 261 382 235 370Z" fill="#111818"/>
+  <path d="M236 354Q252 350 267 352" fill="none" stroke="#4d5651" stroke-width="4" stroke-linecap="round"/>
+  <path d="M260 378L259 398M237 408Q259 391 283 408" fill="none" stroke="#131b1a" stroke-width="5" stroke-linecap="round"/>
+  <g fill="none" stroke="#697068" stroke-width="2.5" stroke-linecap="round" opacity=".65">
+    <path d="M147 288L136 304M157 309L145 329M169 338L151 351M177 357L161 376M179 385L172 402M213 377L198 369M214 390L187 390M222 411L206 427M241 422L236 446M267 423L266 451M285 418L295 437M300 389L325 383M305 402L325 410M350 319L362 333M349 344L366 359M337 371L352 388M183 235L176 256M217 224L212 244M245 222L241 236M288 224L292 240M323 238L332 253"/>
+  </g>
+  <text x="260" y="532" text-anchor="middle" font-family="ui-monospace,monospace" font-size="23" letter-spacing="7" fill="#323c35">lennon</text>
+</svg>

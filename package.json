@@ -1,0 +1,17 @@
+{
+  "name": "@pballada/lennon",
+  "version": "0.1.0",
+  "description": "The loyal coding harness. Claude, Codex, Gemini. One continuing session.",
+  "type": "module",
+  "bin": { "lennon": "bin/lennon.js" },
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node bin/lennon.js",
+    "test": "node --test",
+    "check": "node --check bin/lennon.js && node --test",
+    "bench": "node scripts/bench.js"
+  },
+  "files": ["bin", "src", "assets", "README.md", "LICENSE"],
+  "repository": { "type": "git", "url": "git+https://github.com/pballada/lennon.git" },
+  "license": "MIT"
+}
