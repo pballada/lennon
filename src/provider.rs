@@ -14,19 +14,89 @@ pub struct Decoded {
 fn s(v: &Value) -> String {
     v.as_str().unwrap_or("").to_owned()
 }
+/// Claude Code's permission modes. Lennon never offers a bypass mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Mode {
+    #[default]
+    Manual,
+    AcceptEdits,
+    Plan,
+    Auto,
+}
+impl Mode {
+    pub fn parse(s: &str) -> Result<Self> {
+        Ok(match s {
+            "default" | "manual" | "dontAsk" => Self::Manual,
+            "acceptEdits" => Self::AcceptEdits,
+            "plan" => Self::Plan,
+            "auto" => Self::Auto,
+            "bypassPermissions" => {
+                return Err(error(
+                    "Lennon never bypasses permission checks. Choose manual, acceptEdits, plan, or auto.",
+                ));
+            }
+            _ => {
+                return Err(error(format!(
+                    "Invalid permission mode: {s}. Choose manual, acceptEdits, plan, or auto."
+                )));
+            }
+        })
+    }
+    pub fn writes(self) -> bool {
+        matches!(self, Self::AcceptEdits | Self::Auto)
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::AcceptEdits => "acceptEdits",
+            Self::Plan => "plan",
+            Self::Auto => "auto",
+        }
+    }
+    /// Shift+Tab order.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Manual => Self::AcceptEdits,
+            Self::AcceptEdits => Self::Plan,
+            Self::Plan => Self::Auto,
+            Self::Auto => Self::Manual,
+        }
+    }
+}
+/// Per-run settings that mirror Claude Code's command-line options.
+#[derive(Clone, Debug, Default)]
+pub struct Options {
+    pub mode: Mode,
+    pub add_dirs: Vec<String>,
+    pub allowed_tools: Vec<String>,
+    pub disallowed_tools: Vec<String>,
+}
+impl Options {
+    pub fn with_mode(mode: Mode) -> Self {
+        Self {
+            mode,
+            ..Self::default()
+        }
+    }
+}
 pub fn invocation(
     id: &str,
     native: Option<&str>,
     config: &Value,
-    write: bool,
+    opts: &Options,
 ) -> Result<(String, Vec<String>)> {
+    let write = opts.mode.writes();
     let p = &config["providers"][id];
     let adapter = p["adapter"].as_str().unwrap_or(id);
     let mut a: Vec<String> = vec![];
-    let mut add = |items: &[&str]| a.extend(items.iter().map(|s| s.to_string()));
+    macro_rules! add {
+        ($items:expr) => {
+            a.extend($items.iter().map(|s: &&str| s.to_string()))
+        };
+    }
     match adapter {
         "claude" => {
-            add(&[
+            add!(&[
                 "-p",
                 "--verbose",
                 "--output-format",
@@ -34,26 +104,38 @@ pub fn invocation(
                 "--include-partial-messages",
             ]);
             if let Some(id) = native {
-                add(&["--resume", id]);
+                add!(&["--resume", id]);
+            }
+            let mut allowed: Vec<String> = vec![];
+            let mut denied: Vec<String> = opts.disallowed_tools.clone();
+            match opts.mode {
+                Mode::Manual => add!(&["--permission-mode", "default"]),
+                Mode::AcceptEdits => add!(&["--permission-mode", "acceptEdits"]),
+                Mode::Auto => add!(&["--permission-mode", "auto"]),
+                Mode::Plan => {
+                    add!(&["--permission-mode", "plan"]);
+                    allowed.push("Read,Glob,Grep".into());
+                    denied.push("Bash,Write,Edit,NotebookEdit".into());
+                }
             }
             if write {
-                add(&["--permission-mode", "acceptEdits"]);
                 if let Some(t) = p["allowedTools"].as_str() {
-                    add(&["--allowedTools", t]);
+                    allowed.push(t.into());
                 }
-            } else {
-                add(&[
-                    "--permission-mode",
-                    "plan",
-                    "--allowedTools",
-                    "Read,Glob,Grep",
-                    "--disallowedTools",
-                    "Bash,Write,Edit,NotebookEdit",
-                ]);
+            }
+            allowed.extend(opts.allowed_tools.iter().cloned());
+            if !allowed.is_empty() {
+                a.extend(["--allowedTools".into(), allowed.join(",")]);
+            }
+            if !denied.is_empty() {
+                a.extend(["--disallowedTools".into(), denied.join(",")]);
+            }
+            for dir in &opts.add_dirs {
+                a.extend(["--add-dir".into(), dir.clone()]);
             }
         }
         "codex" => {
-            add(&[
+            add!(&[
                 "exec",
                 "-c",
                 if write {
@@ -64,22 +146,38 @@ pub fn invocation(
                 "-c",
                 "approval_policy=\"never\"",
             ]);
-            if let Some(id) = native {
-                add(&["resume", id]);
+            if write && !opts.add_dirs.is_empty() {
+                a.extend([
+                    "-c".into(),
+                    format!(
+                        "sandbox_workspace_write.writable_roots={}",
+                        json!(opts.add_dirs)
+                    ),
+                ]);
             }
-            add(&["--json"]);
+            if let Some(id) = native {
+                add!(&["resume", id]);
+            }
+            add!(&["--json"]);
         }
         "gemini" => {
-            add(&[
+            add!(&[
                 "--output-format",
                 "stream-json",
                 "--approval-mode",
-                if write { "auto_edit" } else { "plan" },
+                match opts.mode {
+                    Mode::Manual => "default",
+                    Mode::Plan => "plan",
+                    Mode::AcceptEdits | Mode::Auto => "auto_edit",
+                },
             ]);
-            if let Some(id) = native {
-                add(&["--resume", id]);
+            for dir in &opts.add_dirs {
+                a.extend(["--include-directories".into(), dir.clone()]);
             }
-            add(&["-p", "Continue the task supplied on standard input."]);
+            if let Some(id) = native {
+                add!(&["--resume", id]);
+            }
+            add!(&["-p", "Continue the task supplied on standard input."]);
         }
         _ => return Err(error(format!("Unknown adapter: {adapter}"))),
     }
@@ -234,6 +332,16 @@ pub fn portable(adapter: &str, e: &Value) -> Option<Value> {
 mod tests {
     use super::*;
     #[test]
+    fn modes_never_bypass() {
+        assert!(Mode::parse("bypassPermissions").is_err());
+        assert_eq!(Mode::parse("default").unwrap(), Mode::Manual);
+        let mut m = Mode::Manual;
+        for _ in 0..4 {
+            m = m.next();
+        }
+        assert_eq!(m, Mode::Manual);
+    }
+    #[test]
     fn quota_classification() {
         for s in [
             "429",
@@ -280,16 +388,18 @@ mod tests {
         )
         .unwrap();
         for id in ["claude", "codex", "gemini", "fast"] {
-            for write in [false, true] {
-                let (_, args) = invocation(id, Some("native"), &c, write).unwrap();
+            for mode in [Mode::Manual, Mode::AcceptEdits, Mode::Plan, Mode::Auto] {
+                let (_, args) =
+                    invocation(id, Some("native"), &c, &Options::with_mode(mode)).unwrap();
                 let joined = args.join(" ");
                 assert!(!joined.contains("dangerously"));
                 assert!(!joined.contains("yolo"));
+                assert!(!joined.contains("bypass"));
                 assert!(args.contains(&"native".into()));
             }
         }
         assert!(
-            invocation("fast", None, &c, false)
+            invocation("fast", None, &c, &Options::default())
                 .unwrap()
                 .1
                 .contains(&"chosen".into())

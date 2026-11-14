@@ -20,6 +20,12 @@ provider authentication. Minimum supported Rust is declared in Cargo.toml.
   Install/build only --bin lennon for production.
 - Live model tests use account quota; use small read-only prompts when needed.
 
+- The interactive UI (src/tui.rs, src/view.rs) should look and behave like
+  Claude Code: same layout, glyphs, colours, slash commands, shortcuts, and
+  options. Observe the installed `claude` for reference; never copy its
+  source. The one deliberate difference is Lennon's mascot (view::mascot).
+- Never add bypassPermissions or dangerously-skip-permissions modes.
+
 Production source lives in src/*.rs, native integration tests in tests/.
 benchmarks/reference-js is a frozen benchmark/compatibility reference, never a
 production fallback. Model/CLI startup latency is separate from harness overhead.

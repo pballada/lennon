@@ -1,6 +1,21 @@
-# Validation · native Rust 0.2.0 · 2026-11-14
+# Validation · native Rust 0.3.0 · 2026-11-14
 
-## Automated checks
+## Claude Code interface (0.3.0)
+
+- The interactive UI was compared against Claude Code 2.1.325 by rendering both
+  in a pseudo-terminal: header layout, `❯` prompt between `#888888` rules,
+  `⏺`/`⎿` transcript, spinner, completion line, slash menu, shortcuts panel,
+  shell mode (`#fd5db1`), and permission-mode footers (accept edits `#af87ff`,
+  plan `#48968c`). Only the mascot differs.
+- A live read-only Claude Code turn through the new UI rendered the tool call,
+  its truncated output, the answer, and the completion line correctly.
+- A mock-provider failover rendered the Claude → Codex handoff note.
+- `cargo test --all-features`: **45 passed** (22 unit + 23 integration), on
+  stable and on Rust 1.85. A pre-existing race in the SIGINT test (reading
+  the PID file before the fixture wrote it) was fixed.
+
+
+### 0.2.0 checks
 
 - `cargo fmt --all -- --check`: passed.
 - `cargo clippy --all-targets --all-features -- -D warnings`: passed.

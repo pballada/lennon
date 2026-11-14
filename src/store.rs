@@ -238,6 +238,17 @@ impl Drop for Session {
         self.release();
     }
 }
+/// The first user request of a session, for pickers.
+pub fn title(root: &Path, id: &str) -> Option<String> {
+    if !valid_session(id) {
+        return None;
+    }
+    let text = fs::read_to_string(root.join("sessions").join(id).join("events.jsonl")).ok()?;
+    text.lines()
+        .filter(|l| l.contains("\"type\":\"user\""))
+        .find_map(|l| serde_json::from_str::<Value>(l).ok())
+        .and_then(|v| v["text"].as_str().map(str::to_owned))
+}
 pub fn list(root: &Path) -> Result<Vec<Value>> {
     let entries = match fs::read_dir(root.join("sessions")) {
         Ok(e) => e,

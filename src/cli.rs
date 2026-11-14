@@ -1,7 +1,9 @@
 use crate::{
     Result, config, error,
     harness::{self, Display},
+    provider::{Mode, Options},
     store::{self, Session},
+    tui,
 };
 use serde_json::{Value, json};
 use std::{
@@ -16,7 +18,63 @@ use std::{
     },
     time::{Duration, Instant},
 };
-const HELP: &str = "lennon · the loyal coding harness\n\nUsage: lennon [options] [prompt]\n       lennon doctor | sessions | providers | config | version\n\n  -p, --prompt TEXT      Run one task (also accepts piped stdin)\n  -r, --resume ID        Resume a session; no prompt retries unfinished work\n  -c, --continue         Latest session in the current directory\n      --cwd PATH        Project directory\n      --order LIST      Ordered configured provider IDs\n      --provider ID     Use a single configured provider entry\n      --model ID=MODEL  Override a model (repeatable)\n      --config PATH     Select a configuration file\n      --write           Allow edits using native CLI permission policies\n      --timeout MS      Stop a provider after MS; no automatic retry\n      --retry           Clear provider cooldowns\n      --json            Emit JSONL\n  -h, --help            Help\n  -v, --version         Version\n\nConfiguration:\n  lennon config init\n  lennon config set order codex,claude,gemini\n  lennon config set providers.claude.model sonnet\n  lennon config set providers.gemini.enabled false\n  lennon config unset providers.claude.model\n\nInteractive commands: /status /retry /help /exit\nRead-only tools by default. Login with the native CLIs first.\nHandoffs transfer observable context, not private model state.\n";
+const HELP: &str = "Usage: lennon [options] [command] [prompt]
+
+Lennon - Claude Code that keeps working when you hit a usage limit. Starts an
+interactive session by default; use -p/--print for non-interactive output.
+When a provider reports a limit, the task continues on the next configured
+provider (Claude Code, then Codex, then Gemini by default).
+
+Arguments:
+  prompt                                Your prompt
+
+Options:
+  --add-dir <directory>                 Additional directory to allow tool
+                                        access to (repeatable)
+  --allowedTools, --allowed-tools <tools>
+      Comma-separated list of tool names to allow (e.g. \"Bash(git *),Edit\")
+  -c, --continue                        Continue the most recent conversation in
+                                        the current directory
+  --config <path>                       Lennon configuration file to use
+  --cwd <path>                          Project directory
+  --disallowedTools, --disallowed-tools <tools>
+      Comma-separated list of tool names to deny (e.g. \"Bash(git *),Edit\")
+  -h, --help                            Display help for command
+  --model <model>                       Model for the current session's primary
+                                        provider (e.g. 'opus' or 'sonnet'), or
+                                        PROVIDER=MODEL for any provider
+                                        (repeatable)
+  --order <providers>                   Comma-separated provider fallback order
+  --output-format <format>              Output format (only works with --print):
+                                        \"text\" (default), \"json\" (single
+                                        result), or \"stream-json\" (realtime
+                                        streaming) (choices: \"text\", \"json\",
+                                        \"stream-json\")
+  --permission-mode <mode>              Permission mode to use for the session
+                                        (choices: \"manual\", \"acceptEdits\",
+                                        \"plan\", \"auto\")
+  -p, --print                           Print response and exit (useful for
+                                        pipes)
+  --provider <id>                       Use only one configured provider
+  -r, --resume [sessionId]              Resume a conversation by session ID, or
+                                        open interactive picker
+  --retry                               Clear provider cooldowns before running
+  --timeout <ms>                        Stop a stalled provider after ms
+  --verbose                             Show provider handoffs and tool activity
+  -v, --version                         Output the version number
+
+Commands:
+  config [show|init|set|unset]          Show or edit providers, models, and
+                                        fallback order
+  doctor                                Check the health of your provider
+                                        installations
+  providers                             List configured providers in order
+  sessions                              List saved sessions
+
+Lennon never bypasses permission checks. Log in with each provider's own CLI
+first (claude, codex login, gemini). Handoffs transfer observable context, not
+private model state.
+";
 #[derive(Default, Debug)]
 pub struct Args {
     pub values: HashMap<String, String>,
@@ -32,9 +90,28 @@ impl Args {
         self.flags.get(k) == Some(&true)
     }
 }
+const VALUES: [&str; 13] = [
+    "prompt",
+    "cwd",
+    "order",
+    "provider",
+    "model",
+    "config",
+    "timeout",
+    "output-format",
+    "permission-mode",
+    "add-dir",
+    "allowedTools",
+    "disallowedTools",
+    "resume",
+];
+const FLAGS: [&str; 8] = [
+    "print", "continue", "help", "version", "write", "retry", "json", "verbose",
+];
+const REPEATABLE: [&str; 4] = ["model", "add-dir", "allowedTools", "disallowedTools"];
 pub fn parse(args: Vec<String>) -> Result<Args> {
     let mut out = Args::default();
-    let mut it = args.into_iter();
+    let mut it = args.into_iter().peekable();
     let mut literal = false;
     while let Some(arg) = it.next() {
         if literal || arg == "-" || !arg.starts_with('-') {
@@ -46,14 +123,26 @@ pub fn parse(args: Vec<String>) -> Result<Args> {
             continue;
         }
         let (name, inline) = if let Some(a) = arg.strip_prefix("--") {
-            a.split_once('=')
+            let (n, v) = a
+                .split_once('=')
                 .map(|(a, b)| (a.to_owned(), Some(b.to_owned())))
-                .unwrap_or_else(|| (a.to_owned(), None))
+                .unwrap_or_else(|| (a.to_owned(), None));
+            let n = match n.as_str() {
+                "allowed-tools" => "allowedTools".into(),
+                "disallowed-tools" => "disallowedTools".into(),
+                "dangerously-skip-permissions" | "allow-dangerously-skip-permissions" => {
+                    return Err(error(
+                        "Lennon never bypasses permission checks. Use --permission-mode acceptEdits or auto, or allow specific tools with --allowedTools.",
+                    ));
+                }
+                _ => n,
+            };
+            (n, v)
         } else {
             let mut chars = arg[1..].chars();
             let short = chars.next().unwrap_or(' ');
             let name = match short {
-                'p' => "prompt",
+                'p' => "print",
                 'r' => "resume",
                 'c' => "continue",
                 'h' => "help",
@@ -61,30 +150,41 @@ pub fn parse(args: Vec<String>) -> Result<Args> {
                 _ => return Err(error(format!("Unknown option: {arg}"))),
             };
             let rest = chars.as_str();
-            (
-                name.into(),
-                if rest.is_empty() {
-                    None
-                } else {
-                    Some(rest.to_owned())
-                },
-            )
+            if rest.is_empty() {
+                (name.into(), None)
+            } else if name == "print" {
+                // Lennon 0.2 accepted -pTEXT.
+                ("prompt".into(), Some(rest.to_owned()))
+            } else {
+                (name.into(), Some(rest.to_owned()))
+            }
         };
-        if [
-            "prompt", "resume", "cwd", "order", "provider", "model", "config", "timeout",
-        ]
-        .contains(&name.as_str())
-        {
+        if name == "resume" {
+            // -r takes an optional session ID, like Claude Code.
+            let value = inline.or_else(|| {
+                it.next_if(|n| !n.starts_with('-') || n == "-")
+                    .filter(|v| v != "-")
+            });
+            out.flags.insert("resume".into(), true);
+            if let Some(v) = value {
+                out.values.insert(name, v);
+            }
+        } else if VALUES.contains(&name.as_str()) {
             let value = inline
                 .or_else(|| it.next())
                 .ok_or_else(|| error(format!("--{name} requires a value")))?;
             if name == "model" {
                 out.models.push(value);
+            } else if REPEATABLE.contains(&name.as_str()) {
+                let entry = out.values.entry(name).or_default();
+                if !entry.is_empty() {
+                    entry.push('\n');
+                }
+                entry.push_str(&value);
             } else {
                 out.values.insert(name, value);
             }
-        } else if ["continue", "help", "version", "write", "retry", "json"].contains(&name.as_str())
-        {
+        } else if FLAGS.contains(&name.as_str()) {
             if inline.is_some() {
                 return Err(error(format!("--{name} does not accept a value")));
             }
@@ -94,6 +194,13 @@ pub fn parse(args: Vec<String>) -> Result<Args> {
         }
     }
     Ok(out)
+}
+impl Args {
+    fn list(&self, k: &str) -> Vec<String> {
+        self.value(k)
+            .map(|v| v.split('\n').map(str::to_owned).collect())
+            .unwrap_or_default()
+    }
 }
 pub fn safe_text(text: &str) -> String {
     let mut out = String::new();
@@ -135,34 +242,76 @@ fn print(value: &str) -> Result<()> {
     writeln!(io::stdout(), "{value}")?;
     Ok(())
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    Text,
+    Json,
+    StreamJson,
+}
 pub struct Output {
     pub id: String,
-    pub json: bool,
+    pub format: Format,
+    pub verbose: bool,
+    pub result: String,
 }
 impl Output {
     pub fn emit(&mut self, mut v: Value) -> Result<()> {
         v["session"] = json!(self.id);
         print(&v.to_string())
     }
+    fn stream(&self) -> bool {
+        self.format == Format::StreamJson
+    }
+    fn note(&mut self, text: &str) -> Result<()> {
+        writeln!(io::stderr(), "lennon: {}", safe_text(text))?;
+        Ok(())
+    }
 }
 impl Display for Output {
     fn status(&mut self, text: &str) -> Result<()> {
-        if self.json {
-            self.emit(json!({"type":"status","text":text}))
-        } else {
-            writeln!(io::stderr(), "\n[lennon] {}", safe_text(text))?;
-            Ok(())
+        match self.format {
+            Format::StreamJson => self.emit(json!({"type":"status","text":text})),
+            _ if self.verbose => self.note(text),
+            _ => Ok(()),
         }
     }
     fn text(&mut self, text: &str) -> Result<()> {
-        if self.json {
-            self.emit(json!({"type":"text","text":text}))
-        } else {
-            let mut out = io::stdout().lock();
-            out.write_all(safe_text(text).as_bytes())?;
-            out.flush()?;
-            Ok(())
+        self.result.push_str(text);
+        match self.format {
+            Format::StreamJson => self.emit(json!({"type":"text","text":text})),
+            Format::Json => Ok(()),
+            Format::Text => {
+                let mut out = io::stdout().lock();
+                out.write_all(safe_text(text).as_bytes())?;
+                out.flush()?;
+                Ok(())
+            }
         }
+    }
+    fn failover(&mut self, id: &str, status: &str, reason: &str) -> Result<()> {
+        if self.stream() {
+            return self.emit(
+                json!({"type":"status","text":format!("{id}: {status}; trying next provider")}),
+            );
+        }
+        // Separate one provider's partial answer from the next one's.
+        if !self.result.is_empty() && !self.result.ends_with('\n') {
+            self.text("\n")?;
+        }
+        let what = match status {
+            "limit" => "hit its usage limit",
+            "transient" => "is temporarily unavailable",
+            "missing" => "is not installed",
+            _ => "stopped",
+        };
+        let detail = if self.verbose && !reason.is_empty() {
+            format!(" ({})", reason.lines().next().unwrap_or(""))
+        } else {
+            String::new()
+        };
+        self.note(&format!(
+            "{id} {what}{detail}; continuing with the next provider"
+        ))
     }
 }
 fn read_input(cancel: &Arc<AtomicBool>, line: bool) -> Result<Option<String>> {
@@ -219,53 +368,82 @@ fn run_turn(
     session: &mut Session,
     prompt: Option<&str>,
     c: &Value,
-    args: &Args,
+    opts: &Options,
     timeout: u64,
     cancel: &Arc<AtomicBool>,
     output: &mut Output,
 ) -> Result<i32> {
-    let result = harness::turn(
-        session,
-        prompt,
-        c,
-        args.flag("write"),
-        timeout,
-        cancel,
-        output,
-    )?;
-    if output.json {
-        let mut v = json!({"type":"result","status":result.status});
-        if let Some(p) = result.provider {
-            v["provider"] = json!(p);
+    let start = Instant::now();
+    let result = harness::turn(session, prompt, c, opts, timeout, cancel, output)?;
+    let id = session.meta["id"].as_str().unwrap_or("").to_owned();
+    let error_text = result.error.as_ref().map(|e| {
+        e.as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| e.to_string())
+    });
+    match output.format {
+        Format::StreamJson => {
+            let mut v = json!({"type":"result","status":result.status});
+            if let Some(p) = &result.provider {
+                v["provider"] = json!(p);
+            }
+            if let Some(e) = &result.error {
+                v["error"] = e.clone();
+            }
+            if let Some(code) = result.code {
+                v["code"] = json!(code);
+            }
+            output.emit(v)?;
         }
-        if let Some(e) = &result.error {
-            v["error"] = e.clone();
+        Format::Json => {
+            let ok = result.status == "success";
+            let v = json!({
+                "type":"result",
+                "subtype": if ok { "success".to_string() } else { format!("error_{}", result.status) },
+                "is_error": !ok,
+                "duration_ms": start.elapsed().as_millis() as u64,
+                "result": if ok { json!(output.result) } else { json!(error_text) },
+                "session_id": id,
+                "provider": result.provider,
+                "status": result.status,
+            });
+            print(&v.to_string())?;
         }
-        if let Some(code) = result.code {
-            v["code"] = json!(code);
+        Format::Text => {
+            if !output.result.ends_with('\n') {
+                print("")?;
+            }
         }
-        output.emit(v)?;
-    } else {
-        print("")?;
     }
     if result.status != "success" {
-        if let Some(e) = result.error {
-            output.status(
-                &e.as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| e.to_string()),
-            )?;
+        if output.format == Format::Text {
+            if let Some(e) = &error_text {
+                output.note(e)?;
+            }
+            output.note(&format!(
+                "Saved. Continue with: lennon --resume {id}{}",
+                if opts.mode == Mode::Manual {
+                    String::new()
+                } else {
+                    format!(" --permission-mode {}", opts.mode.name())
+                }
+            ))?;
         }
-        output.status(&format!(
-            "Saved. Continue with: lennon --resume {}{}",
-            session.meta["id"].as_str().unwrap(),
-            if args.flag("write") { " --write" } else { "" }
-        ))?;
         return Ok(if result.status == "cancelled" { 130 } else { 1 });
     }
     Ok(0)
 }
 fn doctor(c: &Value, cancel: &Arc<AtomicBool>) -> Result<i32> {
+    let (lines, available) = doctor_lines(c, cancel)?;
+    for l in lines {
+        print(&l)?;
+    }
+    Ok(if available > 0 { 0 } else { 1 })
+}
+/// Check each enabled provider executable. Returns report lines and the
+/// number of providers that answered.
+pub fn doctor_lines(c: &Value, cancel: &Arc<AtomicBool>) -> Result<(Vec<String>, usize)> {
+    let mut lines = vec![];
     let mut available = 0;
     for id in c["order"].as_array().unwrap() {
         let id = id.as_str().unwrap();
@@ -286,7 +464,7 @@ fn doctor(c: &Value, cancel: &Arc<AtomicBool>) -> Result<i32> {
             .stderr(std::process::Stdio::null())
             .process_group(0);
         match command.spawn() {
-            Err(e) => print(&format!("{id:<7} unavailable: {e}"))?,
+            Err(e) => lines.push(format!("{id:<7} unavailable: {e}")),
             Ok(mut child) => {
                 let mut stream = child.stdout.take().unwrap();
                 let reader = std::thread::spawn(move || {
@@ -316,19 +494,20 @@ fn doctor(c: &Value, cancel: &Arc<AtomicBool>) -> Result<i32> {
                 let text = reader.join().unwrap_or_default();
                 if status.success() && !killed {
                     available += 1;
-                    print(&format!("{id:<7} {}", safe_text(text.trim())))?;
+                    lines.push(format!("{id:<7} {}", safe_text(text.trim())));
                 } else {
-                    print(&format!(
+                    lines.push(format!(
                         "{id:<7} unavailable: version command failed or timed out"
-                    ))?;
+                    ));
                 }
             }
         }
     }
-    print(
-        "Login using: claude / codex login / gemini. Doctor checks executables, not account quotas.",
-    )?;
-    Ok(if available > 0 { 0 } else { 1 })
+    lines.push(
+        "Login using: claude / codex login / gemini. Doctor checks executables, not account quotas."
+            .into(),
+    );
+    Ok((lines, available))
 }
 pub fn main_entry() -> Result<i32> {
     let args = parse(env::args().skip(1).collect())?;
@@ -338,7 +517,7 @@ pub fn main_entry() -> Result<i32> {
     }
     let sub = args.positional.first().map(String::as_str).unwrap_or("");
     if args.flag("version") || sub == "version" {
-        print(env!("CARGO_PKG_VERSION"))?;
+        print(&format!("{} (Lennon)", env!("CARGO_PKG_VERSION")))?;
         return Ok(0);
     }
     let path = config::config_path(args.value("config"));
@@ -348,12 +527,35 @@ pub fn main_entry() -> Result<i32> {
         print(&path.display().to_string())?;
         return Ok(0);
     }
-    let c = config::overrides(
+    // PROVIDER=MODEL assignments go to that entry; a bare model goes to the
+    // primary provider, as `claude --model opus` would.
+    let (assigned, bare): (Vec<String>, Vec<String>) =
+        args.models.iter().cloned().partition(|m| m.contains('='));
+    if bare.len() > 1 {
+        return Err(error(
+            "--model accepts one model for the primary provider; use PROVIDER=MODEL for others",
+        ));
+    }
+    let mut c = config::overrides(
         config::normalize(config::read(&path, args.value("config").is_some())?)?,
         args.value("order"),
         args.value("provider"),
-        &args.models,
+        &assigned,
     )?;
+    if let Some(model) = bare.first() {
+        let primary = c["order"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .find(|id| c["providers"][*id]["enabled"] == true)
+            .ok_or_else(|| error("No enabled provider"))?
+            .to_owned();
+        if model.trim().is_empty() {
+            return Err(error("--model requires a model name"));
+        }
+        c["providers"][&primary]["model"] = json!(model);
+    }
     if sub == "config" {
         if args.positional.len() > 2 {
             return Err(error("Usage: lennon config [show]"));
@@ -364,10 +566,11 @@ pub fn main_entry() -> Result<i32> {
         print(&serde_json::to_string_pretty(&v)?)?;
         return Ok(0);
     }
+    let json_lines = args.flag("json");
     if sub == "providers" {
         for (id, p) in c["providers"].as_object().unwrap() {
             let order = c["order"].as_array().unwrap().iter().position(|v| v == id);
-            if args.flag("json") {
+            if json_lines {
                 let mut v = p.clone();
                 v["id"] = json!(id);
                 v["order"] = order.map(|n| json!(n + 1)).unwrap_or(Value::Null);
@@ -391,19 +594,28 @@ pub fn main_entry() -> Result<i32> {
     }
     if sub == "sessions" {
         for s in store::list(&root)? {
-            if args.flag("json") {
+            if json_lines {
                 print(&s.to_string())?;
             } else {
+                let id = s["id"].as_str().unwrap_or("");
                 print(&format!(
-                    "{}  {}  {}  {}",
-                    s["id"].as_str().unwrap_or(""),
+                    "{}  {}  {}  {}  {}",
+                    id,
                     s["updated"].as_str().unwrap_or(""),
                     if s["pending"] == true {
                         "unfinished"
                     } else {
                         "complete"
                     },
-                    safe_text(s["cwd"].as_str().unwrap_or(""))
+                    safe_text(s["cwd"].as_str().unwrap_or("")),
+                    safe_text(
+                        &store::title(&root, id)
+                            .unwrap_or_default()
+                            .replace('\n', " ")
+                            .chars()
+                            .take(60)
+                            .collect::<String>()
+                    )
                 ))?;
             }
         }
@@ -412,6 +624,7 @@ pub fn main_entry() -> Result<i32> {
     let cancel = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(libc::SIGINT, cancel.clone())?;
     signal_hook::flag::register(libc::SIGTERM, cancel.clone())?;
+    signal_hook::flag::register(libc::SIGHUP, cancel.clone())?;
     if sub == "doctor" {
         return doctor(&c, &cancel);
     }
@@ -423,22 +636,43 @@ pub fn main_entry() -> Result<i32> {
     if timeout > 9007199254740991 {
         return Err(error("--timeout must be a non-negative safe integer"));
     }
-    if args.value("resume").is_some() && args.flag("continue") {
+    let format = match (args.value("output-format"), json_lines) {
+        (None, false) | (Some("text"), false) => Format::Text,
+        (None, true) | (Some("stream-json"), _) => Format::StreamJson,
+        (Some("json"), false) => Format::Json,
+        (Some(f), _) => {
+            return Err(error(format!(
+                "Invalid --output-format {f}. Choose text, json, or stream-json."
+            )));
+        }
+    };
+    let mut mode = match args.value("permission-mode") {
+        Some(m) => Mode::parse(m)?,
+        None => Mode::Manual,
+    };
+    if args.flag("write") {
+        if args.value("permission-mode").is_some() && !mode.writes() {
+            return Err(error("--write conflicts with --permission-mode"));
+        }
+        if !mode.writes() {
+            mode = Mode::AcceptEdits;
+        }
+    }
+    let opts = Options {
+        mode,
+        add_dirs: args
+            .list("add-dir")
+            .iter()
+            .map(|d| fs::canonicalize(d).map(|p| p.display().to_string()))
+            .collect::<std::io::Result<_>>()
+            .map_err(|e| error(format!("--add-dir: {e}")))?,
+        allowed_tools: args.list("allowedTools"),
+        disallowed_tools: args.list("disallowedTools"),
+    };
+    if args.flag("resume") && args.flag("continue") {
         return Err(error("Choose --resume or --continue"));
     }
     let cwd = fs::canonicalize(args.value("cwd").map(Path::new).unwrap_or(Path::new(".")))?;
-    let id = if args.flag("continue") {
-        Some(
-            store::list(&root)?
-                .iter()
-                .find(|s| s["cwd"] == json!(cwd))
-                .and_then(|s| s["id"].as_str())
-                .ok_or_else(|| error("No previous Lennon session in this directory"))?
-                .to_owned(),
-        )
-    } else {
-        args.value("resume").map(str::to_owned)
-    };
     let mut prompt = args.value("prompt").map(str::to_owned).or_else(|| {
         if args.positional.is_empty() {
             None
@@ -447,7 +681,29 @@ pub fn main_entry() -> Result<i32> {
         }
     });
     let tty = io::stdin().is_terminal();
-    let one_shot = prompt.is_some() || !tty || id.is_some();
+    let interactive = !args.flag("print")
+        && args.value("prompt").is_none()
+        && format == Format::Text
+        && tty
+        && io::stdout().is_terminal();
+    let picker = args.flag("resume") && args.value("resume").is_none();
+    if picker && !interactive {
+        return Err(error(
+            "--resume requires a session ID with --print; run `lennon sessions` to list them",
+        ));
+    }
+    let id = if args.flag("continue") {
+        Some(
+            store::list(&root)?
+                .iter()
+                .find(|s| s["cwd"] == json!(cwd))
+                .and_then(|s| s["id"].as_str())
+                .ok_or_else(|| error("No conversation found to continue"))?
+                .to_owned(),
+        )
+    } else {
+        args.value("resume").map(str::to_owned)
+    };
     if !tty {
         if let Some(piped) = read_input(&cancel, false)?.filter(|s| !s.trim().is_empty()) {
             prompt = Some(prompt.map(|p| format!("{p}\n\n{piped}")).unwrap_or(piped));
@@ -456,13 +712,14 @@ pub fn main_entry() -> Result<i32> {
     if cancel.load(Ordering::Relaxed) {
         return Ok(130);
     }
-    if !one_shot && args.flag("json") {
+    if !interactive && prompt.is_none() && id.is_none() {
         return Err(error(
-            "Interactive mode requires text output; supply --prompt with --json",
+            "Input must be provided either through stdin or as a prompt argument when using --print",
         ));
     }
     let mut session = if let Some(id) = id {
-        let s = Session::open(&root, &id)?;
+        let s = Session::open(&root, &id)
+            .map_err(|_| error(format!("No conversation found with session ID: {id}")))?;
         if args.value("cwd").is_some() && s.meta["cwd"] != json!(cwd) {
             return Err(error("Session belongs to a different working directory"));
         }
@@ -475,84 +732,42 @@ pub fn main_entry() -> Result<i32> {
         session.meta["cooldowns"] = json!({});
         session.save()?;
     }
+    if interactive {
+        return tui::run(
+            tui::Ctx {
+                root,
+                config_path: path,
+                config: c,
+                opts,
+                timeout,
+                cancel,
+                verbose: args.flag("verbose"),
+            },
+            session,
+            prompt,
+            picker,
+        );
+    }
     let mut output = Output {
         id: session.meta["id"].as_str().unwrap().into(),
-        json: args.flag("json"),
+        format,
+        verbose: args.flag("verbose"),
+        result: String::new(),
     };
     output.status(&format!(
         "session {} · {}",
         output.id,
         session.meta["cwd"].as_str().unwrap()
     ))?;
-    if one_shot {
-        return run_turn(
-            &mut session,
-            prompt.as_deref(),
-            &c,
-            &args,
-            timeout,
-            &cancel,
-            &mut output,
-        );
-    }
-    let order = c["order"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|v| c["providers"][v.as_str().unwrap()]["enabled"] == true)
-        .map(|v| v.as_str().unwrap())
-        .collect::<Vec<_>>()
-        .join(" → ");
-    eprintln!("lennon · /help for commands · {order}");
-    loop {
-        if cancel.load(Ordering::Relaxed) {
-            break;
-        }
-        write!(io::stdout(), "\nlennon › ")?;
-        io::stdout().flush()?;
-        let Some(line) = read_input(&cancel, true)? else {
-            break;
-        };
-        let text = line.trim();
-        match text {
-            "" => continue,
-            "/exit" | "/quit" => break,
-            "/help" => {
-                print("/status · /retry · /exit\nType a task to continue the same session.")?
-            }
-            "/status" => print(&serde_json::to_string_pretty(&session.meta)?)?,
-            "/retry" => {
-                session.meta["cooldowns"] = json!({});
-                session.save()?;
-                if session.meta["pending"] == true
-                    && run_turn(&mut session, None, &c, &args, timeout, &cancel, &mut output)?
-                        == 130
-                {
-                    break;
-                }
-            }
-            _ if text.starts_with('/') => print("Unknown command. Use /help.")?,
-            _ => {
-                if run_turn(
-                    &mut session,
-                    Some(text),
-                    &c,
-                    &args,
-                    timeout,
-                    &cancel,
-                    &mut output,
-                )? == 130
-                {
-                    break;
-                }
-            }
-        }
-    }
-    Ok(if cancel.load(Ordering::Relaxed) {
-        130
-    } else {
-        0
-    })
+    run_turn(
+        &mut session,
+        prompt.as_deref(),
+        &c,
+        &opts,
+        timeout,
+        &cancel,
+        &mut output,
+    )
 }
 
 #[cfg(test)]
@@ -564,14 +779,28 @@ mod tests {
             "--model=claude=sonnet".into(),
             "-p".into(),
             "task".into(),
+            "-r".into(),
             "--order".into(),
             "claude,codex".into(),
             "--json".into(),
         ])
         .unwrap();
         assert_eq!(a.models, ["claude=sonnet"]);
-        assert_eq!(a.value("prompt"), Some("task"));
+        assert!(a.flag("print"));
+        assert_eq!(a.positional, ["task"]);
+        assert!(a.flag("resume") && a.value("resume").is_none());
         assert!(a.flag("json"));
+        let b = parse(vec![
+            "-r".into(),
+            "abc".into(),
+            "--allowed-tools".into(),
+            "Read".into(),
+            "--allowedTools=Edit".into(),
+        ])
+        .unwrap();
+        assert_eq!(b.value("resume"), Some("abc"));
+        assert_eq!(b.list("allowedTools"), ["Read", "Edit"]);
+        assert!(parse(vec!["--dangerously-skip-permissions".into()]).is_err());
         assert!(parse(vec!["--unknown".into()]).is_err());
         assert!(parse(vec!["--model".into()]).is_err());
     }

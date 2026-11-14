@@ -1,9 +1,9 @@
 [package]
 name = "lennon"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
-description = "A loyal coding harness: Claude Code, Codex, Gemini. One continuing session."
+description = "Claude Code, in Rust, that keeps working on Codex or Gemini when you hit a limit."
 license = "MIT"
 repository = "https://github.com/pballada/lennon"
 exclude = ["benchmarks", "assets", "target"]
@@ -27,6 +27,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 libc = "0.2"
 signal-hook = "0.4"
 regex = "1"
+crossterm = { version = "0.28", default-features = false, features = ["bracketed-paste", "events"] }
+unicode-width = "0.2"
 
 [profile.release]
 lto = true

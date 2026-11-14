@@ -5,16 +5,28 @@
   <p>Claude Code → OpenAI Codex → Gemini CLI.<br />One workspace. One continuing session.</p>
 </div>
 
-Lennon is a **native Rust CLI** that runs the coding agents you already use.
-When a provider reports a usage limit, Lennon saves the observable conversation
-and tool activity and hands the task to the next configured model. It uses each
-CLI's existing login, tools, and native sessions. **No Node.js, JavaScript runtime,
-or API key is required by Lennon.** Upstream CLIs retain their own requirements.
+Lennon is **Claude Code, in Rust, that keeps working when you hit a limit.**
+It looks and behaves like Claude Code: the same prompt box, `⏺`/`⎿` transcript,
+spinner, slash commands, permission modes, shortcuts, and command-line options.
+The only visual difference is the icon: Lennon instead of Claude's mascot.
 
-**Status: working alpha, macOS and Linux.** This is an independent harness, not a
-Claude Code fork or a reproduction of every native interactive feature. Hidden
-reasoning, provider-side state, plugins, and interactive permission dialogs cannot
-transfer identically between vendors.
+```
+ ▄▄    ▄█   Lennon v0.3.0
+ ▀▄▀▀█▀▀█   claude → codex → gemini
+  ▀▀▀▀▀▀▀   ~/projects/app
+```
+
+Under the hood Lennon drives the coding agents you already use. When Claude Code
+reports a usage limit, Lennon saves the observable conversation and tool
+activity and continues the same task with the next configured provider (Codex,
+then Gemini by default), in the same session and workspace. It uses each CLI's
+existing login, tools, and native sessions. **No Node.js, JavaScript runtime, or
+API key is required by Lennon.** Upstream CLIs retain their own requirements.
+
+**Status: working alpha, macOS and Linux.** Lennon is an independent
+implementation, not a Claude Code fork. Hidden reasoning, provider-side state,
+plugins, and interactive permission dialogs cannot transfer identically between
+vendors; see [Permissions](#permissions-and-credentials).
 
 ## Install
 
@@ -41,27 +53,59 @@ lennon doctor
 
 ## Use
 
+Use it like `claude`:
+
 ```sh
 cd /path/to/your/project
-lennon --write "Fix the failing tests and verify the changes"
-lennon                                  # interactive, native read-only/plan policy
-lennon --write                          # interactive, edits permitted
-lennon -p "Explain this repository"      # one task, then exit
-git diff | lennon -p "Review this diff"
-lennon --continue -p "Now add tests"
-lennon --resume SESSION_ID --write       # retry pending work
-lennon --json -p "Explain the project"   # JSONL for scripts
-lennon sessions
-lennon providers
+lennon                                   # interactive session
+lennon "fix the failing tests"           # interactive, starting with a prompt
+lennon -p "explain this repository"      # print the answer and exit
+cat error.log | lennon -p "what went wrong?"
+lennon -c                                # continue the latest conversation here
+lennon -r                                # pick a conversation to resume
+lennon -r SESSION_ID "now add tests"     # resume a specific conversation
+lennon --permission-mode acceptEdits     # allow file edits
+lennon -p --output-format json "..."     # one JSON result (or stream-json)
+lennon --model opus                      # model for the primary provider
 ```
 
-Interactive commands: `/status`, `/retry`, `/help`, `/exit`. `/retry` clears
-cooldowns and retries pending work; `--retry` does the same for one-shot runs.
-`--resume` without a prompt retries unfinished work and rejects completed tasks.
-`--cwd PATH` selects a project directory. `--timeout MS` stops a stalled provider
-while preserving the pending task; timeouts do not cause automatic failover.
-Ctrl-C and SIGTERM stop the provider process group and save an unfinished session.
-Uncooperative children receive SIGKILL after a 1.5-second grace period.
+Supported options mirror Claude Code where they apply: `-p/--print`,
+`-c/--continue`, `-r/--resume [id]`, `--model`, `--permission-mode`,
+`--output-format text|json|stream-json`, `--add-dir`, `--allowedTools`,
+`--disallowedTools`, `--verbose`, `-v/--version`, `-h/--help`. Lennon adds
+`--order`, `--provider`, `--config`, `--cwd`, `--timeout MS`, and `--retry`.
+Lennon 0.2 spellings still work (`--write`, `--json`, `--prompt`).
+
+### In the session
+
+| Input | Action |
+| --- | --- |
+| `/` | Slash command menu: `/help`, `/clear`, `/resume`, `/model`, `/status`, `/cost`, `/config`, `/doctor`, `/init`, `/memory`, `/exit`, plus Lennon's `/providers` and `/retry`. Your `.claude/commands` and `.claude/skills` appear too and are passed to the provider. |
+| `@` | File path completion |
+| `!` | Shell mode: run a command; its output joins the next message |
+| `?` | Shortcuts |
+| shift+tab | Cycle permission modes: manual → accept edits → plan → auto |
+| esc | Interrupt the provider (the session is saved), close menus; twice clears input |
+| enter while working | Queue a message for when the provider finishes (up arrow edits it) |
+| shift+enter, `\`+enter, ctrl+j | Newline |
+| ↑ / ↓ | Prompt history for this project |
+| ctrl+o | Verbose tool output · ctrl+g edit prompt in `$EDITOR` · ctrl+l redraw · ctrl+z suspend |
+| ctrl+c | Interrupt or clear input; twice to exit |
+
+When a provider hits its limit, the transcript says so and work continues:
+
+```
+⏺ claude hit its usage limit · continuing with codex
+```
+
+If every provider is unavailable, the session is saved; run `/retry` (or
+`lennon -c` later). `--timeout MS` stops a stalled provider while preserving the
+task; timeouts do not cause automatic failover. Ctrl-C/Esc and SIGTERM stop the
+provider process group and save an unfinished session. Uncooperative children
+receive SIGKILL after a 1.5-second grace period.
+
+Other commands: `lennon sessions`, `lennon providers`, `lennon doctor`,
+`lennon config`.
 
 ## Configure providers, models, and fallback order
 
@@ -106,13 +150,14 @@ lennon --config /path/to/config.json providers
 
 Entries accept `adapter` (`claude`, `codex`, `gemini`), `model`, `command`, and
 `enabled`. Built-in entry names inherit their matching adapter. Claude also
-accepts `allowedTools` in write mode. `command` is a single executable path,
+accepts `allowedTools` in acceptEdits and auto modes. `command` is a single executable path,
 never a shell command. Models are passed unchanged to the upstream CLI and must
 be available to your account. Disabled entries are skipped. At least one ordered
 entry must be enabled. Duplicate IDs, unknown settings, and invalid assignments
 fail before starting any provider.
 
-Repeat `--model ID=MODEL` for different entries. `--provider` selects one entry;
+A bare `--model NAME` sets the primary (first enabled) entry, like Claude Code;
+repeat `--model ID=MODEL` for other entries. `/model` changes models in a session. `--provider` selects one entry;
 it cannot combine with `--order`. Precedence: CLI flags → selected config →
 defaults. `--config` overrides `LENNON_CONFIG`, which overrides the user config
 path. An explicitly selected missing file is an error. Per-run flags never
@@ -174,12 +219,22 @@ an error requires cancellation or an explicit timeout.
 
 ## Permissions and credentials
 
-Read-only/plan is the default. `--write` selects Claude `acceptEdits`, Codex
-`workspace-write`, and Gemini `auto_edit`. Lennon never enables permission bypass
-or yolo mode. Native hooks, MCP tools, trust settings, and sandbox policies still
-apply. Headless CLIs cannot always present interactive approval dialogs; commands
-requiring approval may be denied. For Claude, use native settings or configured
-`allowedTools`, such as `"Read,Edit,Bash(npm test)"`, for specific permissions.
+Lennon uses Claude Code's permission modes and maps them onto each provider:
+
+| Mode | Claude Code | Codex | Gemini |
+| --- | --- | --- | --- |
+| manual (default) | `default` | read-only sandbox | `default` |
+| acceptEdits | `acceptEdits` | workspace-write sandbox | `auto_edit` |
+| plan | `plan`, read-only tools | read-only sandbox | `plan` |
+| auto | `auto` | workspace-write sandbox | `auto_edit` |
+
+Lennon never enables `bypassPermissions`, `--dangerously-skip-permissions`, or
+yolo mode; those options are rejected. Providers run headless, so they cannot
+show interactive approval dialogs. A tool that would prompt is denied, and the
+transcript shows the denial. Allow specific tools with your native settings,
+`--allowedTools "Bash(npm test)"`, or a configured `allowedTools`, or switch modes
+with shift+tab. Native hooks, MCP tools, trust settings, and sandbox policies
+still apply.
 
 Lennon does not read or exchange login tokens. Subscription mode removes common
 API-key environment variables from child processes to avoid taking precedence

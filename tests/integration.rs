@@ -498,14 +498,17 @@ fn sigint_saves_pending_task_and_kills_child() {
         .spawn()
         .unwrap();
     let start = Instant::now();
-    while !pidfile.exists() {
+    // The fixture creates the file before writing the PID; wait for both.
+    let pid = loop {
+        if let Some(pid) = fs::read_to_string(&pidfile)
+            .ok()
+            .and_then(|s| s.trim().parse::<i32>().ok())
+        {
+            break pid;
+        }
         assert!(start.elapsed() < Duration::from_secs(5));
         std::thread::sleep(Duration::from_millis(10));
-    }
-    let pid = fs::read_to_string(&pidfile)
-        .unwrap()
-        .parse::<i32>()
-        .unwrap();
+    };
     unsafe {
         libc::kill(child.id() as i32, libc::SIGINT);
     }
@@ -622,4 +625,71 @@ fn continue_finds_latest_session_and_completed_retry_is_rejected() {
     let again = f.run(&["--json", "--resume", &id], "success");
     assert!(!again.status.success());
     assert!(String::from_utf8_lossy(&again.stderr).contains("No unfinished task"));
+}
+#[test]
+fn claude_code_compatible_cli() {
+    let f = Fixture::new();
+    let v = f.run(&["--version"], "success");
+    assert!(
+        String::from_utf8_lossy(&v.stdout)
+            .trim()
+            .ends_with("(Lennon)")
+    );
+    // -p is a flag, the prompt positional, and json prints one result object.
+    let o = f.run(
+        &[
+            "-p",
+            "--output-format",
+            "json",
+            "--provider",
+            "codex",
+            "Task",
+        ],
+        "success",
+    );
+    success(&o);
+    let r: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(r["type"], "result");
+    assert_eq!(r["subtype"], "success");
+    assert_eq!(r["result"], "OK 🐕");
+    assert!(r["session_id"].is_string());
+    // Text mode prints only the answer.
+    let t = f.run(&["-p", "--provider", "codex", "Task"], "success");
+    assert_eq!(String::from_utf8_lossy(&t.stdout).trim(), "OK 🐕");
+    // A bare --model applies to the primary provider; permission modes map natively.
+    success(&f.run(
+        &[
+            "-p",
+            "--json",
+            "--model",
+            "opus",
+            "--permission-mode",
+            "plan",
+            "--add-dir",
+            ".",
+            "--allowedTools",
+            "Read",
+            "Task",
+        ],
+        "success",
+    ));
+    let call = f.records().last().unwrap().clone();
+    assert_eq!(call["adapter"], "claude");
+    assert_eq!(call["model"], "opus");
+    let args: Vec<String> = serde_json::from_value(call["args"].clone()).unwrap();
+    let joined = args.join(" ");
+    assert!(joined.contains("--permission-mode plan"));
+    assert!(joined.contains("--add-dir"));
+    assert!(joined.contains("Read,Glob,Grep,Read"));
+    // Lennon never bypasses permissions.
+    let before = f.records().len();
+    for bad in [
+        vec!["-p", "--dangerously-skip-permissions", "Task"],
+        vec!["-p", "--permission-mode", "bypassPermissions", "Task"],
+        vec!["-p", "--write", "--permission-mode", "plan", "Task"],
+        vec!["-p"],
+    ] {
+        assert!(!f.run(&bad, "success").status.success());
+    }
+    assert_eq!(f.records().len(), before);
 }

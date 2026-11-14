@@ -1,5 +1,6 @@
 use crate::{
-    Result, config, context, error, provider,
+    Result, config, context, error,
+    provider::{self, Decoded, Options},
     runner::{self, Outcome, Spec},
     store::{Session, millis},
 };
@@ -14,12 +15,34 @@ use std::{
 pub trait Display {
     fn status(&mut self, text: &str) -> Result<()>;
     fn text(&mut self, text: &str) -> Result<()>;
+    /// A provider attempt begins.
+    fn attempt(&mut self, id: &str, model: Option<&str>, resuming: bool) -> Result<()> {
+        self.status(&format!(
+            "{id}{}{}",
+            model.map(|m| format!(" · {m}")).unwrap_or_default(),
+            if resuming { " · resuming" } else { "" }
+        ))
+    }
+    /// A provider stopped for a recoverable reason; the next one will be tried.
+    fn failover(&mut self, id: &str, status: &str, _reason: &str) -> Result<()> {
+        self.status(&format!("{id}: {status}; trying next provider"))
+    }
+    /// One decoded provider protocol event.
+    fn event(&mut self, id: &str, _adapter: &str, _raw: &Value, decoded: &Decoded) -> Result<()> {
+        if let Some(activity) = &decoded.activity {
+            self.status(&format!("{id} · {activity}"))?;
+        }
+        if !decoded.text.is_empty() {
+            self.text(&decoded.text)?;
+        }
+        Ok(())
+    }
 }
 pub fn turn(
     session: &mut Session,
     text: Option<&str>,
     config: &Value,
-    write: bool,
+    opts: &Options,
     timeout: u64,
     cancel: &Arc<AtomicBool>,
     display: &mut dyn Display,
@@ -71,22 +94,14 @@ pub fn turn(
             .as_str()
             .map(str::to_owned);
         let prompt = context::prompt(session, id, config)?;
-        let (command, args) = provider::invocation(id, native.as_deref(), config, write)?;
-        session.append(json!({"type":"attempt_start","provider":id,"adapter":adapter,"model":route["model"],"route":route,"nativeId":native,"permission":if write{"write"}else{"read-only"}}))?;
+        let (command, args) = provider::invocation(id, native.as_deref(), config, opts)?;
+        session.append(json!({"type":"attempt_start","provider":id,"adapter":adapter,"model":route["model"],"route":route,"nativeId":native,"permission":if opts.mode.writes(){"write"}else{"read-only"},"mode":opts.mode.name()}))?;
         session.meta["providers"]
             .as_object_mut()
             .unwrap()
             .entry(id)
             .or_insert_with(|| json!({}))["route"] = route.clone();
-        let label = format!(
-            "{id}{}{}",
-            p["model"]
-                .as_str()
-                .map(|m| format!(" · {m}"))
-                .unwrap_or_default(),
-            if native.is_some() { " · resuming" } else { "" }
-        );
-        display.status(&label)?;
+        display.attempt(id, p["model"].as_str(), native.is_some())?;
         let cwd = session.meta["cwd"]
             .as_str()
             .ok_or_else(|| error("Invalid session working directory"))?
@@ -114,13 +129,7 @@ pub fn turn(
                         session.save()?;
                     }
                 }
-                if let Some(activity) = &decoded.activity {
-                    display.status(&format!("{id} · {activity}"))?;
-                }
-                if !decoded.text.is_empty() {
-                    display.text(&decoded.text)?;
-                }
-                Ok(())
+                display.event(id, adapter, event, decoded)
             },
         )?;
         result.provider = Some(id.into());
@@ -143,24 +152,22 @@ pub fn turn(
             return Ok(result);
         }
         if ["limit", "transient", "missing"].contains(&result.status.as_str()) {
-            reasons.push(format!(
-                "{id}: {} — {}",
-                result.status,
-                result
-                    .error
-                    .as_ref()
-                    .map(|e| e
-                        .as_str()
+            let reason = result
+                .error
+                .as_ref()
+                .map(|e| {
+                    e.as_str()
                         .map(str::to_owned)
-                        .unwrap_or_else(|| e.to_string()))
-                    .unwrap_or_default()
-            ));
+                        .unwrap_or_else(|| e.to_string())
+                })
+                .unwrap_or_default();
+            reasons.push(format!("{id}: {} — {reason}", result.status));
             if result.status != "missing" {
                 session.meta["cooldowns"][id] =
                     json!(millis().saturating_add(config["cooldownMs"].as_u64().unwrap()));
             }
             session.save()?;
-            display.status(&format!("{id}: {}; trying next provider", result.status))?;
+            display.failover(id, &result.status, &reason)?;
             continue;
         }
         session.save()?;

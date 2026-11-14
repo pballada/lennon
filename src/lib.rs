@@ -9,6 +9,8 @@ pub mod harness;
 pub mod provider;
 pub mod runner;
 pub mod store;
+pub mod tui;
+pub mod view;
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 pub fn error(message: impl Into<String>) -> Box<dyn std::error::Error + Send + Sync> {
     message.into().into()

@@ -13,3 +13,7 @@ Keep the features that make him recognizable:
 The illustration uses charcoal, muted sage-grey, and warm silver on an ivory
 background. Keep it as editable SVG with an accessible title and description.
 The cream tile and monospaced wordmark match Lennon's existing project identity.
+
+The terminal header draws the same dog at Claude Code's mascot size (9 columns by
+3 rows of half blocks) in `src/view.rs`: the folded ear on the left, the tall ear
+on the right, silver brows above dark eyes, and a silver beard around the nose.
