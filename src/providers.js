@@ -1,5 +1,8 @@
-export function invocation(name, nativeId, config, permission = 'read-only') {
-  const p = config.providers[name] || {};
+import { adapterFor } from './config.js';
+
+export function invocation(id, nativeId, config, permission = 'read-only') {
+  const name = adapterFor(id, config);
+  const p = config.providers[id] || {};
   let args;
   if (name === 'claude') {
     args = ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages'];

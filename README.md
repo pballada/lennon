@@ -39,6 +39,7 @@ git diff | lennon -p "Review this diff"  # add piped context
 lennon --continue -p "Now add tests"     # latest session in this directory
 lennon --resume SESSION_ID --write       # retry unfinished work
 lennon --order codex,gemini -p "Review the build"
+lennon --provider claude --model claude=sonnet -p "Explain this module"
 lennon --json -p "Explain the project"   # JSONL for scripts
 lennon sessions
 lennon config
@@ -93,7 +94,70 @@ User config: `~/.config/lennon/config.json` (respects `XDG_CONFIG_HOME`). No pro
 }
 ```
 
-Each provider accepts an optional `model` string. Claude also accepts `allowedTools` in write mode. `command` is a single executable path, never a shell command. Cooldowns are local to a Lennon session and default to five minutes; they do not predict provider reset times.
+Manage the configuration from the terminal:
+
+```sh
+lennon config init                              # create a file; never overwrite one
+lennon config set order codex,claude,gemini      # persist fallback order
+lennon config set providers.claude.model sonnet
+lennon config set providers.gemini.enabled false
+lennon config unset providers.claude.model      # restore the native CLI default
+lennon config                                  # show effective configuration
+lennon providers                               # list entries, models, and positions
+```
+
+Provider entries accept `adapter` (`claude`, `codex`, or `gemini`), `model`,
+`command`, and `enabled`. The built-in entries inherit the adapter matching
+their name. Disabled entries are skipped even if they remain in `order`.
+At least one ordered entry must be enabled. Omit `model` to use the native CLI's
+configured default. Model names are passed unchanged to that CLI and must be
+available to your account. Claude also accepts `allowedTools` in write mode.
+`command` is a single executable path, never a shell command.
+
+For multiple models from the same backend, define separate named entries:
+
+```json
+{
+  "order": ["quick", "deep", "codex", "gemini"],
+  "providers": {
+    "quick": { "adapter": "claude", "model": "sonnet" },
+    "deep": { "adapter": "claude", "model": "opus" },
+    "codex": { "adapter": "codex" },
+    "gemini": { "adapter": "gemini", "enabled": true }
+  }
+}
+```
+
+You can create an entry without editing JSON manually:
+
+```sh
+lennon config set providers.quick '{"adapter":"claude","model":"sonnet"}'
+lennon config set order quick,codex,gemini
+```
+
+Each entry has its own native session and cooldown. Provider account limits may
+be shared between models; adding entries does not increase account quota.
+Changing an entry's adapter, command, or model starts a fresh native session
+with the recorded context, avoiding incompatible native histories.
+
+Per-invocation overrides:
+
+```sh
+lennon --order codex,claude --model claude=sonnet -p "Review this change"
+lennon --provider quick -p "Explain the project"  # only one configured entry
+lennon --config /path/to/config.json providers
+```
+
+Repeat `--model ID=MODEL` for different entries. `--provider` and `--order` are
+mutually exclusive. Precedence is CLI flags → selected config file → defaults.
+`--config` overrides `LENNON_CONFIG`, which overrides the normal user config path.
+Explicitly selected missing files fail immediately. Flags do not modify the
+saved file, and resumed sessions use the current config and flags. Existing
+config files with `order`, `model`, and `command` remain compatible.
+
+Cooldowns are local to a Lennon session and default to five minutes; they do not
+predict provider reset times. Unknown settings, invalid model assignments,
+duplicate order entries, and unknown adapter IDs are rejected before execution.
 
 State: `~/.local/state/lennon/sessions/SESSION_ID/` (respects `XDG_STATE_HOME`). Override with `LENNON_STATE_DIR`; override config location with `LENNON_CONFIG`. The journal is authoritative when recovering an interrupted metadata write. Only an incomplete final JSONL record is repaired; other corruption stops recovery. Session locks prevent simultaneous writers. Native session files must also remain available for native resume; deleted native sessions require starting a new Lennon session.
 

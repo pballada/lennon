@@ -4,20 +4,23 @@ import { createInterface } from 'node:readline/promises';
 import { stdin, stdout, stderr } from 'node:process';
 import { realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { loadConfig, stateRoot, configPath, names } from '../src/config.js';
+import { loadConfig, stateRoot, configPath, applyOverrides, adapterFor } from '../src/config.js';
 import { Session, listSessions } from '../src/store.js';
 import { runTurn } from '../src/harness.js';
 
 const help = `lennon · the loyal coding harness
 
 Usage: lennon [options] [prompt]
-       lennon doctor | sessions | config | version
+       lennon doctor | sessions | providers | config | version
 
   -p, --prompt TEXT      Run one task, then exit (also accepts piped stdin)
   -r, --resume ID        Resume a Lennon session; no prompt retries unfinished work
   -c, --continue         Resume latest session in this working directory
       --cwd PATH        Project directory (default: current directory)
       --order LIST      Provider order, e.g. claude,codex,gemini
+      --provider NAME   Use only this configured provider entry
+      --model ID=MODEL  Override an entry's model (repeatable)
+      --config PATH     Read a specific config file
       --write           Allow edits using each CLI's native permission policy
       --timeout MS      Stop a provider after MS; no automatic retry of timed-out work
       --retry           Clear this session's provider cooldowns
@@ -28,6 +31,13 @@ With no prompt, starts a conversation. /status, /help, /exit are available.
 Read-only tool policy is the default. --write permits edits; it never bypasses
 the upstream sandbox or enables yolo mode. Login with each native CLI first.
 Provider switchovers share observable history and files, not private model state.
+
+Configuration:
+  lennon config init
+  lennon config set order codex,claude,gemini
+  lennon config set providers.claude.model sonnet
+  lennon config set providers.gemini.enabled false
+  lennon config unset providers.claude.model
 `;
 function print(value) { stdout.write(value + '\n'); }
 function safeText(value) {
@@ -40,16 +50,35 @@ async function main() {
     version: { type: 'boolean', short: 'v' },
     resume: { type: 'string', short: 'r' }, continue: { type: 'boolean', short: 'c' },
     cwd: { type: 'string' }, order: { type: 'string' }, write: { type: 'boolean' },
+    provider: { type: 'string' }, model: { type: 'string', multiple: true }, config: { type: 'string' },
     timeout: { type: 'string' }, retry: { type: 'boolean' }, json: { type: 'boolean' },
   } });
   if (v.help) { print(help); return; }
   if (v.version || positionals[0] === 'version') { print('0.1.0'); return; }
-  const config = loadConfig(), root = stateRoot();
-  if (positionals[0] === 'config') { print(JSON.stringify({ path: configPath(), state: root, ...config }, null, 2)); return; }
+  const env = { ...process.env, ...(v.config ? { LENNON_CONFIG: v.config } : {}) };
+  const root = stateRoot(env);
+  if (positionals[0] === 'config' && positionals.length > 1 && positionals[1] !== 'show') {
+    const { editConfig } = await import('../src/config-command.js');
+    print(editConfig(positionals.slice(1), env)); return;
+  }
+  const config = applyOverrides(loadConfig(env, Boolean(v.config)), { order: v.order, provider: v.provider, models: v.model });
+  if (positionals[0] === 'config') {
+    if (positionals.length > 2) throw new Error('Usage: lennon config [show]');
+    print(JSON.stringify({ path: configPath(env), state: root, ...config }, null, 2)); return;
+  }
+  if (positionals[0] === 'providers') {
+    for (const [id, p] of Object.entries(config.providers)) {
+      const order = config.order.indexOf(id);
+      if (v.json) print(JSON.stringify({ id, ...p, order: order < 0 ? null : order + 1 }));
+      else print(`${id}  ${p.adapter}  ${p.model || '(native default)'}  ${p.enabled ? order < 0 ? 'not in order' : `#${order + 1}` : 'disabled'}`);
+    }
+    return;
+  }
   if (positionals[0] === 'doctor') {
     let available = 0;
     for (const name of config.order) {
-      const command = config.providers[name]?.command || name;
+      if (!config.providers[name].enabled) continue;
+      const command = config.providers[name]?.command || adapterFor(name, config);
       const result = spawnSync(command, ['--version'], { encoding: 'utf8', timeout: 10000, shell: false });
       const ok = !result.error && result.status === 0;
       if (ok) available++;
@@ -64,10 +93,6 @@ async function main() {
     if (v.json) for (const s of sessions) print(JSON.stringify(s));
     else for (const s of sessions) print(`${s.id}  ${s.updated}  ${s.pending ? 'unfinished' : 'complete'}  ${safeText(s.cwd)}`);
     return;
-  }
-  if (v.order) {
-    config.order = v.order.split(',');
-    if (!config.order.length || config.order.some(n => !names.includes(n)) || new Set(config.order).size !== config.order.length) throw new Error('Invalid --order');
   }
   const timeoutMs = v.timeout === undefined ? 0 : Number(v.timeout);
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0) throw new Error('--timeout must be a non-negative integer');
@@ -116,7 +141,7 @@ async function main() {
     };
     if (oneShot) { await turn(prompt); return; }
     if (v.json) throw new Error('Interactive mode requires text output; supply --prompt with --json');
-    stderr.write('lennon · /help for commands · Claude → Codex → Gemini\n');
+    stderr.write(`lennon · /help for commands · ${config.order.filter(id => config.providers[id].enabled).join(' → ')}\n`);
     rl = createInterface({ input: stdin, output: stdout });
     rl.on('SIGINT', stop);
     while (!controller.signal.aborted) {

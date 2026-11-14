@@ -9,7 +9,7 @@ export function buildPrompt(session, provider, config) {
   for (const e of events.slice(cursor)) {
     if (e.type === 'user') records.push({ role: 'user', content: e.text });
     if (e.type === 'provider_event') {
-      const record = portable(e.provider, e.event);
+      const record = portable(e.adapter || e.provider, e.event);
       if (record) records.push({ provider: e.provider, ...record });
     }
     if (e.type === 'attempt_end' && e.status !== 'success') records.push({ role: 'interruption', provider: e.provider, status: e.status });

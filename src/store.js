@@ -62,7 +62,9 @@ export class Session {
     this.meta.pending = lastUser > lastDone;
     for (let i = 0; i < records.length; i++) {
       const e = records[i];
-      if (e.type === 'native_session') this.meta.providers[e.provider] = { ...this.meta.providers[e.provider], id: e.id };
+      if (e.type === 'route_reset') delete this.meta.providers[e.provider];
+      if (e.type === 'attempt_start' && e.route) this.meta.providers[e.provider] = { ...this.meta.providers[e.provider], route: e.route };
+      if (e.type === 'native_session') this.meta.providers[e.provider] = { ...this.meta.providers[e.provider], id: e.id, ...(e.route ? { route: e.route } : {}) };
       if (e.type === 'complete') this.meta.providers[e.provider] = { ...this.meta.providers[e.provider], cursor: i + 1 };
     }
     } catch (e) { this.unlock(); throw e; }
